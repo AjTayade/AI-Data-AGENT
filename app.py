@@ -11,7 +11,6 @@ st.set_page_config(page_title="AI Data Agent", layout="wide")
 st.title("🗂️ The Ultimate Data & Doc Loader")
 st.write("Upload CSV, Excel, JSON, SQL (.db), PDF, Word (.docx), or TXT files.")
 
-# 1. Expanded file types!
 uploaded_files = st.file_uploader(
     "Drop your files here", 
     type=["csv", "xlsx", "xls", "json", "db", "sqlite", "pdf", "docx", "txt"], 
@@ -19,7 +18,6 @@ uploaded_files = st.file_uploader(
 )
 
 if uploaded_files:
-    # We now have TWO memory boxes: One for Tables, one for Text
     if 'datasets' not in st.session_state:
         st.session_state['datasets'] = {} 
     if 'documents' not in st.session_state:
@@ -28,12 +26,24 @@ if uploaded_files:
     file_names = [file.name for file in uploaded_files]
     tabs = st.tabs(file_names)
     
+    # This "set" acts as our Duplicate Radar for this upload batch
+    processed_files = set()
+    
     for file, tab in zip(uploaded_files, tabs):
-        file_extension = pathlib.Path(file.name).suffix.lower()
-        
         with tab:
+            # --- 1. THE DUPLICATE CATCHER ---
+            if file.name in processed_files:
+                st.error(f"🚨 DUPLICATE DETECTED: You uploaded '{file.name}' more than once.")
+                st.warning("Skipping this file to prevent data overlap.")
+                continue # This skips to the next file
+            
+            # Add file to our radar so we remember it
+            processed_files.add(file.name)
+            
+            file_extension = pathlib.Path(file.name).suffix.lower()
+            
             try:
-                # --- STRUCTURED DATA (Spreadsheets) ---
+                # --- STRUCTURED DATA ---
                 if file_extension in ['.csv', '.xlsx', '.xls', '.json']:
                     if file_extension == '.csv':
                         df = pd.read_csv(file)
@@ -46,9 +56,8 @@ if uploaded_files:
                     st.success(f"Loaded Table: {file.name}")
                     st.dataframe(df.head())
                 
-                # --- SQL DATABASES (.db or .sqlite files) ---
+                # --- SQL DATABASES ---
                 elif file_extension in ['.db', '.sqlite']:
-                    # SQLite needs a physical file, so we trick it by creating a temporary one
                     with tempfile.NamedTemporaryFile(delete=False, suffix=file_extension) as tmp:
                         tmp.write(file.getvalue())
                         tmp_path = tmp.name
@@ -59,7 +68,6 @@ if uploaded_files:
                     st.success(f"Connected to SQL Database: {file.name}")
                     st.write("Tables found in this database:", tables['name'].tolist())
                     
-                    # Auto-load the first table to preview it
                     if not tables.empty:
                         first_table = tables['name'].iloc[0]
                         df = pd.read_sql_query(f"SELECT * FROM {first_table}", conn)
@@ -68,26 +76,30 @@ if uploaded_files:
                         st.dataframe(df.head())
                     conn.close()
 
-                # --- UNSTRUCTURED DATA (Documents) ---
+                # --- UNSTRUCTURED DATA (With the Key Fix!) ---
                 elif file_extension == '.txt':
                     text_data = file.getvalue().decode("utf-8")
                     st.session_state['documents'][file.name] = text_data
                     st.success(f"Loaded Text Document: {file.name}")
-                    st.text_area("Preview", text_data[:500] + "...", height=150)
+                    # Notice the 'key' parameter added below to prevent the crash
+                    st.text_area("Preview", text_data[:500] + "...", height=150, key=f"preview_{file.name}")
                     
                 elif file_extension == '.pdf':
                     pdf_reader = PyPDF2.PdfReader(file)
                     text_data = "".join([page.extract_text() + "\n" for page in pdf_reader.pages])
                     st.session_state['documents'][file.name] = text_data
                     st.success(f"Loaded PDF: {file.name}")
-                    st.text_area("Preview", text_data[:500] + "...", height=150)
+                    st.text_area("Preview", text_data[:500] + "...", height=150, key=f"preview_{file.name}")
                     
                 elif file_extension == '.docx':
                     doc = docx.Document(file)
                     text_data = "\n".join([para.text for para in doc.paragraphs])
                     st.session_state['documents'][file.name] = text_data
                     st.success(f"Loaded Word Doc: {file.name}")
-                    st.text_area("Preview", text_data[:500] + "...", height=150)
+                    st.text_area("Preview", text_data[:500] + "...", height=150, key=f"preview_{file.name}")
 
+            # --- 2. THE CORRUPT FILE CATCHER ---
             except Exception as e:
-                st.error(f"Error loading {file.name}: {e}")
+                st.error(f"🚨 FILE CORRUPTED OR UNSUPPORTED: Could not read '{file.name}'.")
+                st.write(f"Technical error code: {e}")
+                st.info("Make sure the file isn't password protected or saved in an older, unsupported format.")
