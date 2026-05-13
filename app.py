@@ -12,16 +12,18 @@ from langchain_experimental.agents import create_pandas_dataframe_agent
 
 st.set_page_config(page_title="AI Data Agent", layout="wide")
 
+
 # --- 1. SETUP THE BRAIN & THE VAULT ---
 try:
     genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
-    model = genai.GenerativeModel('gemini-1.5-flash')
+    
+    # UPGRADED: Using Gemini 3 Ultra for maximum reasoning
+    model = genai.GenerativeModel('gemini-3-ultra') 
+    
     supabase: Client = create_client(st.secrets["SUPABASE_URL"], st.secrets["SUPABASE_KEY"])
 except Exception as e:
     st.error(f"Setup Error: Please check your Streamlit Secrets. ({e})")
     st.stop()
-
-st.title("🗂️ The Ultimate Data Agent")
 
 # --- 2. FETCH CLOUD DATA ON STARTUP ---
 if 'raw_cloud' not in st.session_state:
