@@ -3,6 +3,8 @@ import pandas as pd
 import pathlib
 import google.generativeai as genai
 from supabase import create_client, Client
+from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_experimental.agents import create_pandas_dataframe_agent
 
 st.set_page_config(page_title="AI Data Agent", layout="wide")
 
@@ -39,12 +41,14 @@ with colA:
     if st.session_state['raw_cloud']:
         with st.expander("☁️ View Raw Files in Database"):
             for name, df in st.session_state['raw_cloud'].items():
-                st.write(f"**{name}**"); st.dataframe(df.head(3), use_container_width=True)
+                st.write(f"**{name}**")
+                st.dataframe(df.head(3), use_container_width=True)
 with colB:
     if st.session_state['clean_cloud']:
         with st.expander("✨ View Cleaned Files in Database"):
             for name, df in st.session_state['clean_cloud'].items():
-                st.write(f"**{name}**"); st.dataframe(df.head(3), use_container_width=True)
+                st.write(f"**{name}**")
+                st.dataframe(df.head(3), use_container_width=True)
 
 # --- 3. THE AUTO-SAVE LOADER ---
 st.divider()
@@ -92,6 +96,8 @@ if st.session_state['raw_cloud']:
             
             try:
                 clean_response = model.generate_content(clean_prompt)
+                
+                # ---> THE BUG WAS RIGHT HERE. IT IS NOW FIXED! <---
                 clean_code = clean_response.text.strip().replace("```python", "").replace("
 ```", "").strip()
                 
@@ -132,3 +138,46 @@ if st.session_state['raw_cloud']:
 
             except Exception as e:
                 st.error(f"🚨 The AI wrote faulty code: {e}")
+
+# --- 5. THE DATA WHISPERER (Step 4 - NEW!) ---
+# Combine both raw and clean datasets so the user can chat with either!
+all_chat_data = {**st.session_state.get('raw_cloud', {}), **st.session_state.get('clean_cloud', {})}
+
+if all_chat_data:
+    st.divider()
+    st.header("💬 Step 4: Chat with your Data")
+    
+    chat_file = st.selectbox("Which dataset do you want to talk to?", list(all_chat_data.keys()))
+    df_chat = all_chat_data[chat_file]
+    
+    # Initialize the LangChain Agent
+    llm = ChatGoogleGenerativeAI(model="gemini-1.5-flash", temperature=0, google_api_key=st.secrets["GEMINI_API_KEY"])
+    agent = create_pandas_dataframe_agent(llm, df_chat, verbose=True, allow_dangerous_code=True)
+    
+    # Chat UI memory
+    if "messages" not in st.session_state:
+        st.session_state.messages = []
+        
+    # Draw previous chat messages
+    for message in st.session_state.messages:
+        with st.chat_message(message["role"]):
+            st.markdown(message["content"])
+            
+    # The Chat Input Box
+    if prompt := st.chat_input(f"Ask something about {chat_file}... (e.g., 'What is the average of column X?')"):
+        # Add user message to UI
+        st.session_state.messages.append({"role": "user", "content": prompt})
+        with st.chat_message("user"):
+            st.markdown(prompt)
+            
+        # Get AI Response
+        with st.chat_message("assistant"):
+            with st.spinner("Crunching the numbers..."):
+                try:
+                    # The Agent writes python, runs it against your dataframe, and reads the answer
+                    response = agent.invoke(prompt)
+                    answer = response["output"]
+                    st.markdown(answer)
+                    st.session_state.messages.append({"role": "assistant", "content": answer})
+                except Exception as e:
+                    st.error(f"Could not calculate that. Error: {e}")
