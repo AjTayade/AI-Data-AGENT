@@ -16,15 +16,16 @@ st.set_page_config(page_title="AI Data Agent", layout="wide")
 # --- 1. SETUP THE BRAIN & THE VAULT ---
 try:
     genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
-    
-    # UPGRADED: Using Gemini 3 Ultra for maximum reasoning
-    model = genai.GenerativeModel('gemini-3-ultra') 
-    
+
+    # CORRECTED: Using an official Gemini 3 reasoning model ID
+    model = genai.GenerativeModel('gemini-3.1-pro-preview')
+
     supabase: Client = create_client(st.secrets["SUPABASE_URL"], st.secrets["SUPABASE_KEY"])
 except Exception as e:
-    st.error(f"Setup Error: Please check your Streamlit Secrets. ({e})")
+    # This will now catch and display if the API key itself is missing or invalid
+    st.error(f"Setup Error: Please check your Streamlit Secrets or Model ID. ({e})")
     st.stop()
-
+    
 # --- 2. FETCH CLOUD DATA ON STARTUP ---
 if 'raw_cloud' not in st.session_state:
     st.session_state['raw_cloud'] = {}
