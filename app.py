@@ -1,120 +1,134 @@
 import streamlit as st
 import pandas as pd
 import pathlib
-import sqlite3
-import tempfile
-import PyPDF2
-import docx
-import hashlib
+import google.generativeai as genai
+from supabase import create_client, Client
 
 st.set_page_config(page_title="AI Data Agent", layout="wide")
 
-st.title("🗂️ The Ultimate Data & Doc Loader")
-st.write("Upload CSV, Excel, JSON, SQL (.db), PDF, Word (.docx), or TXT files.")
+# --- 1. SETUP THE BRAIN & THE VAULT ---
+try:
+    genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
+    model = genai.GenerativeModel('gemini-1.5-flash')
+    
+    supabase: Client = create_client(st.secrets["SUPABASE_URL"], st.secrets["SUPABASE_KEY"])
+except Exception as e:
+    st.error(f"Setup Error: Please check your Streamlit Secrets. ({e})")
+    st.stop()
 
-uploaded_files = st.file_uploader(
-    "Drop your files here", 
-    type=["csv", "xlsx", "xls", "json", "db", "sqlite", "pdf", "docx", "txt"], 
-    accept_multiple_files=True
-)
+st.title("🗂️ The Ultimate Data Agent")
+
+# --- 2. FETCH CLOUD DATA ON STARTUP ---
+if 'raw_cloud' not in st.session_state:
+    st.session_state['raw_cloud'] = {}
+    st.session_state['clean_cloud'] = {}
+    with st.spinner("Syncing with Supabase Cloud..."):
+        try:
+            # Fetch Raw
+            raw_res = supabase.table("raw_datasets").select("file_name, data").execute()
+            st.session_state['raw_cloud'] = {r['file_name']: pd.DataFrame(r['data']) for r in raw_res.data}
+            # Fetch Cleaned
+            clean_res = supabase.table("cleaned_datasets").select("file_name, data").execute()
+            st.session_state['clean_cloud'] = {r['file_name']: pd.DataFrame(r['data']) for r in clean_res.data}
+        except Exception as e:
+            st.warning(f"Could not fetch cloud data: {e}")
+
+# Display Cloud Memory
+colA, colB = st.columns(2)
+with colA:
+    if st.session_state['raw_cloud']:
+        with st.expander("☁️ View Raw Files in Database"):
+            for name, df in st.session_state['raw_cloud'].items():
+                st.write(f"**{name}**"); st.dataframe(df.head(3), use_container_width=True)
+with colB:
+    if st.session_state['clean_cloud']:
+        with st.expander("✨ View Cleaned Files in Database"):
+            for name, df in st.session_state['clean_cloud'].items():
+                st.write(f"**{name}**"); st.dataframe(df.head(3), use_container_width=True)
+
+# --- 3. THE AUTO-SAVE LOADER ---
+st.divider()
+st.subheader("📤 Upload New Data")
+uploaded_files = st.file_uploader("Drop your files here", type=["csv", "xlsx", "json"], accept_multiple_files=True)
 
 if uploaded_files:
-    if 'datasets' not in st.session_state:
-        st.session_state['datasets'] = {} 
-    if 'documents' not in st.session_state:
-        st.session_state['documents'] = {} 
-    if 'seen_hashes' not in st.session_state:
-        st.session_state['seen_hashes'] = {} 
-        
-    file_names = [file.name for file in uploaded_files]
-    tabs = st.tabs(file_names)
-    
-    current_batch_names = set()
-    
-    for file, tab in zip(uploaded_files, tabs):
-        with tab:
-            # --- 1. NAME DUPLICATE CATCHER ---
-            if file.name in current_batch_names:
-                st.toast(f"Duplicate Name: {file.name}", icon="🚨")
-                st.error(f"📄 **{file.name}**\n\n🚨 **DUPLICATE NAME:** Uploaded multiple times in this batch. Skipping.")
-                continue
-            current_batch_names.add(file.name)
+    for file in uploaded_files:
+        if file.name not in st.session_state['raw_cloud']: # Only process if it's new
+            file_ext = pathlib.Path(file.name).suffix.lower()
+            try:
+                if file_ext == '.csv': df = pd.read_csv(file)
+                elif file_ext in ['.xlsx', '.xls']: df = pd.read_excel(file)
+                elif file_ext == '.json': df = pd.read_json(file, orient='records')
+                
+                # Automatically save to Supabase Raw Table
+                with st.spinner(f"Auto-saving {file.name} to cloud..."):
+                    json_data = df.to_dict(orient='records')
+                    supabase.table('raw_datasets').upsert({
+                        'file_name': file.name,
+                        'data': json_data
+                    }).execute()
+                
+                st.session_state['raw_cloud'][file.name] = df # Update local memory
+                st.success(f"✅ Loaded and saved to Raw Database: {file.name}")
+            except Exception as e:
+                st.error(f"Error loading {file.name}: {e}")
 
-            # --- 2. CONTENT DUPLICATE CATCHER (The Popup & Red Alert) ---
-            file_hash = hashlib.md5(file.getvalue()).hexdigest()
-            
-            if file_hash in st.session_state['seen_hashes']:
-                original_name = st.session_state['seen_hashes'][file_hash]
-                if original_name != file.name:
-                    # The Pop-up!
-                    st.toast(f"Duplicate DNA caught: {file.name}", icon="🚫")
-                    # The Red Box Alert!
-                    st.error(f"📄 **{file.name}**\n\n🚨 **DUPLICATE DATA:** Exact same contents as '{original_name}'. Skipping.")
-                    continue
-            else:
-                st.session_state['seen_hashes'][file_hash] = file.name
-            
-            # --- FILE PROCESSING ---
-            file_extension = pathlib.Path(file.name).suffix.lower()
+# --- 4. THE AI DOMAIN SPECIALIST ---
+if st.session_state['raw_cloud']:
+    st.divider()
+    st.header("🧠 Step 3: AI Domain Specialist")
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        selected_file = st.selectbox("Select a raw dataset to process:", list(st.session_state['raw_cloud'].keys()))
+    with col2:
+        domain_context = st.text_input("Industry/Domain:", value="General Business")
+    
+    if st.button("🪄 Run AI Data Cleaning & Analysis", type="primary"):
+        df_to_process = st.session_state['raw_cloud'][selected_file]
+        
+        with st.spinner(f"AI is analyzing {selected_file}..."):
+            clean_prompt = f"You are a Data Engineer in {domain_context}. Sample: {df_to_process.head(5).to_csv(index=False)}. Schema: {str(df_to_process.dtypes)}. Write a Python function 'clean_data(df)' to clean this. Return ONLY valid python code."
             
             try:
-                # --- STRUCTURED DATA (With UI fix) ---
-                if file_extension in ['.csv', '.xlsx', '.xls', '.json']:
-                    if file_extension == '.csv':
-                        df = pd.read_csv(file)
-                    elif file_extension in ['.xlsx', '.xls']:
-                        df = pd.read_excel(file)
-                    elif file_extension == '.json':
-                        df = pd.read_json(file, orient='records')
-                        
-                    st.session_state['datasets'][file.name] = df
-                    st.success(f"Loaded Table: {file.name}")
-                    # UI FIX: Lock height and force it to fit the container
-                    st.dataframe(df.head(50), use_container_width=True, height=300)
+                clean_response = model.generate_content(clean_prompt)
+                clean_code = clean_response.text.strip().replace("```python", "").replace("
+```", "").strip()
                 
-                # --- SQL DATABASES (With UI fix) ---
-                elif file_extension in ['.db', '.sqlite']:
-                    with tempfile.NamedTemporaryFile(delete=False, suffix=file_extension) as tmp:
-                        tmp.write(file.getvalue())
-                        tmp_path = tmp.name
-                        
-                    conn = sqlite3.connect(tmp_path)
-                    tables = pd.read_sql_query("SELECT name FROM sqlite_master WHERE type='table';", conn)
-                    
-                    st.success(f"Connected to SQL Database: {file.name}")
-                    st.write("Tables found:", tables['name'].tolist())
-                    
-                    if not tables.empty:
-                        first_table = tables['name'].iloc[0]
-                        df = pd.read_sql_query(f"SELECT * FROM {first_table}", conn)
-                        st.session_state['datasets'][f"{file.name}_{first_table}"] = df
-                        st.write(f"Preview of `{first_table}`:")
-                        # UI FIX
-                        st.dataframe(df.head(50), use_container_width=True, height=300)
-                    conn.close()
-
-                # --- UNSTRUCTURED DATA (With UI fix) ---
-                elif file_extension == '.txt':
-                    text_data = file.getvalue().decode("utf-8")
-                    st.session_state['documents'][file.name] = text_data
-                    st.success(f"Loaded Text Document: {file.name}")
-                    # UI FIX: Lock height so it doesn't stretch the page
-                    st.text_area("Preview", text_data[:1000] + "...", height=250, key=f"preview_{file.name}")
-                    
-                elif file_extension == '.pdf':
-                    pdf_reader = PyPDF2.PdfReader(file)
-                    text_data = "".join([page.extract_text() + "\n" for page in pdf_reader.pages])
-                    st.session_state['documents'][file.name] = text_data
-                    st.success(f"Loaded PDF: {file.name}")
-                    st.text_area("Preview", text_data[:1000] + "...", height=250, key=f"preview_{file.name}")
-                    
-                elif file_extension == '.docx':
-                    doc = docx.Document(file)
-                    text_data = "\n".join([para.text for para in doc.paragraphs])
-                    st.session_state['documents'][file.name] = text_data
-                    st.success(f"Loaded Word Doc: {file.name}")
-                    st.text_area("Preview", text_data[:1000] + "...", height=250, key=f"preview_{file.name}")
+                local_vars = {}
+                exec(clean_code, globals(), local_vars)
+                df_cleaned = local_vars['clean_data'](df_to_process)
+                st.success("✅ Data dynamically cleaned by AI!")
+                
+                # Format the new filename
+                clean_name = f"cleaned_{selected_file}"
+                
+                col3, col4 = st.columns(2)
+                with col3:
+                    # THE DOWNLOAD BUTTON
+                    st.download_button(
+                        label=f"⬇️ Download {clean_name} (CSV)",
+                        data=df_cleaned.to_csv(index=False).encode('utf-8'),
+                        file_name=clean_name,
+                        mime="text/csv",
+                        use_container_width=True
+                    )
+                with col4:
+                    # SAVE TO DATABASE BUTTON
+                    if st.button(f"💾 Save {clean_name} to Database", use_container_width=True):
+                        try:
+                            supabase.table('cleaned_datasets').upsert({
+                                'file_name': clean_name,
+                                'data': df_cleaned.to_dict(orient='records')
+                            }).execute()
+                            st.session_state['clean_cloud'][clean_name] = df_cleaned
+                            st.success("Saved to Cleaned Database!")
+                        except Exception as e:
+                            st.error(f"Cloud save failed: {e}")
+                
+                st.subheader("📊 Executive AI Report")
+                eda_prompt = f"Analyze these stats: {df_cleaned.describe(include='all').to_string()}. Provide 3 trends, anomalies, and hypotheses for {domain_context}."
+                st.markdown(model.generate_content(eda_prompt).text)
 
             except Exception as e:
-                st.error(f"🚨 FILE CORRUPTED OR UNSUPPORTED: Could not read '{file.name}'.")
-                st.write(f"Error code: {e}")
+                st.error(f"🚨 The AI wrote faulty code: {e}")
