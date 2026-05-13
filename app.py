@@ -98,8 +98,7 @@ if st.session_state['raw_cloud']:
                 clean_response = model.generate_content(clean_prompt)
                 
                 # ---> THE BUG WAS RIGHT HERE. IT IS NOW FIXED! <---
-                clean_code = clean_response.text.strip().replace("```python", "").replace("
-```", "").strip()
+                clean_code = clean_response.text.strip().replace("```python", "").replace("```", "").strip()
                 
                 local_vars = {}
                 exec(clean_code, globals(), local_vars)
