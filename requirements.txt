@@ -6,3 +6,4 @@ langchain-google-genai
 langchain-experimental
 PyPDF2
 python-docx
+supabase
