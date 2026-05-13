@@ -137,44 +137,54 @@ if st.session_state['raw_cloud']:
     if st.button("🪄 Run AI Data Cleaning & Analysis", type="primary"):
         df_to_process = st.session_state['raw_cloud'][selected_file]
         
-        with st.spinner(f"AI is analyzing {selected_file}..."):
-            clean_prompt = f"You are a Data Engineer in {domain_context}. Sample: {df_to_process.head(5).to_csv(index=False)}. Schema: {str(df_to_process.dtypes)}. Write a Python function 'clean_data(df)' to clean this. Return ONLY valid python code."
+        with st.spinner(f"AI is sanitizing {selected_file}..."):
+            # 1. The "Universal Sanitizer" Prompt
+            clean_prompt = f"""
+            You are a Senior Data Engineer. Your task is to write a Python function 'clean_data(df)' 
+            to sanitize this dataset for any irregularities. 
             
+            INPUT DATA INFO:
+            Sample: {df_to_process.head(5).to_csv(index=False)}
+            Schema: {str(df_to_process.dtypes)}
+
+            THE FUNCTION MUST:
+            1. Strip all leading/trailing whitespace from string columns.
+            2. Detect and remove hidden non-printable characters (e.g., \\x00, \\ufeff).
+            3. Standardize date columns to ISO format if detected.
+            4. Identify 'junk' values (like '?', 'N/A', 'none', '---') and convert them to standard Nulls (np.nan).
+            5. Drop rows that are 100% empty and drop columns that are 100% null.
+            6. Handle inconsistent casing (e.g., convert all headers to snake_case).
+
+            Return ONLY valid executable Python code. NO markdown. NO backticks. NO explanations.
+            Include: import pandas as pd, import numpy as np.
+            """
+
             try:
+                # 2. Send to Gemini
                 clean_response = model.generate_content(clean_prompt)
                 clean_code = clean_response.text.strip().replace("```python", "").replace("```", "").strip()
                 
+                # 3. Execute the AI's code locally
                 local_vars = {}
                 exec(clean_code, globals(), local_vars)
                 df_cleaned = local_vars['clean_data'](df_to_process)
-                st.success("✅ Data dynamically cleaned by AI!")
                 
-                clean_name = f"cleaned_{selected_file}"
+                st.success("✅ Data sanitized for all irregularities!")
                 
-                col3, col4 = st.columns(2)
-                with col3:
-                    st.download_button(
-                        label=f"⬇️ Download {clean_name}",
-                        data=df_cleaned.to_csv(index=False).encode('utf-8'),
-                        file_name=f"{clean_name}.csv",
-                        mime="text/csv",
-                        use_container_width=True
-                    )
-                with col4:
-                    if st.button(f"💾 Save {clean_name} to Database", use_container_width=True):
-                        try:
-                            supabase.table('cleaned_datasets').upsert({'file_name': clean_name, 'data': df_cleaned.to_dict(orient='records')}).execute()
-                            st.session_state['clean_cloud'][clean_name] = df_cleaned
-                            st.success("Saved to Cleaned Database!")
-                        except Exception as e:
-                            st.error(f"Cloud save failed: {e}")
+                # 4. Display results & Download/Save options
+                clean_name = f"sanitized_{selected_file}"
                 
-                st.subheader("📊 Executive AI Report")
-                eda_prompt = f"Analyze these stats: {df_cleaned.describe(include='all').to_string()}. Provide 3 trends, anomalies, and hypotheses for {domain_context}."
-                st.markdown(model.generate_content(eda_prompt).text)
+                c1, c2 = st.columns(2)
+                with c1:
+                    st.download_button("⬇️ Download Sanitized CSV", df_cleaned.to_csv(index=False), f"{clean_name}.csv", "text/csv")
+                with c2:
+                    if st.button(f"💾 Save {clean_name} to Cloud"):
+                        supabase.table('cleaned_datasets').upsert({'file_name': clean_name, 'data': df_cleaned.to_dict(orient='records')}).execute()
+                        st.session_state['clean_cloud'][clean_name] = df_cleaned
+                        st.success("Saved!")
 
             except Exception as e:
-                st.error(f"🚨 The AI wrote faulty code: {e}")
+                st.error(f"🚨 Sanitization failed: {e}")
 
 # --- 5. THE DATA WHISPERER (Step 4) ---
 all_chat_data = {**st.session_state.get('raw_cloud', {}), **st.session_state.get('clean_cloud', {})}
