@@ -5,6 +5,8 @@ import sqlite3
 import tempfile
 import PyPDF2
 import docx
+import re             
+import numpy as np
 import google.generativeai as genai
 from supabase import create_client, Client
 from langchain_google_genai import ChatGoogleGenerativeAI
