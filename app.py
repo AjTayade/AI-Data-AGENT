@@ -242,3 +242,89 @@ if all_chat_data:
                         st.session_state.messages.append({"role": "assistant", "content": clean_answer})
                     else:
                         st.error(f"Could not calculate that. Error: {e}")
+
+# --- 6. THE EXECUTIVE BI DASHBOARD (Step 5) ---
+all_chat_data = {**st.session_state.get('raw_cloud', {}), **st.session_state.get('clean_cloud', {})}
+
+if all_chat_data:
+    st.divider()
+    st.header("📊 Step 5: Executive AI Dashboard")
+    
+    dash_file = st.selectbox("Select a dataset to profile:", list(all_chat_data.keys()), key="dash_file_select")
+    df_dash = all_chat_data[dash_file]
+    
+    # --- FAST NATIVE KPIs ---
+    st.subheader("High-Level KPIs")
+    kpi1, kpi2, kpi3, kpi4 = st.columns(4)
+    num_cols = df_dash.select_dtypes(include=np.number).columns
+    
+    kpi1.metric("Total Records", f"{len(df_dash):,}")
+    kpi2.metric("Total Features", len(df_dash.columns))
+    if len(num_cols) > 0:
+        kpi3.metric(f"Avg {num_cols[0]}", f"{df_dash[num_cols[0]].mean():.2f}")
+    if len(num_cols) > 1:
+        kpi4.metric(f"Max {num_cols[1]}", f"{df_dash[num_cols[1]].max():.2f}")
+        
+    st.divider()
+    
+    # --- AI DASHBOARD GENERATOR ---
+    if st.button("🪄 Auto-Generate Full Dashboard", type="primary"):
+        with st.spinner("The AI is designing an executive dashboard for you..."):
+            dash_prompt = f"""
+            You are a Senior BI Developer. Analyze this dataset and write a Python function `build_dashboard(df)` 
+            that generates 4 insightful, distinct Plotly charts.
+            
+            INPUT DATA INFO:
+            Columns: {list(df_dash.columns)}
+            Sample: {df_dash.head(3).to_csv(index=False)}
+            
+            THE FUNCTION MUST:
+            1. Import plotly.express as px
+            2. Create exactly 4 different charts (e.g., bar, scatter, pie, histogram) that reveal the most interesting business trends in this specific data.
+            3. Return a dictionary of the figures formatted like this:
+               return {{"Chart Title 1": fig1, "Chart Title 2": fig2, "Chart Title 3": fig3, "Chart Title 4": fig4}}
+               
+            Return ONLY valid executable Python code. NO markdown. NO backticks. NO explanations.
+            """
+            
+            try:
+                # 1. Ask Gemini to write the Dashboard code
+                dash_response = model.generate_content(dash_prompt)
+                dash_code = dash_response.text.strip().replace("```python", "").replace("```", "").strip()
+                
+                # 2. Execute the code dynamically
+                local_vars = {}
+                exec(dash_code, globals(), local_vars)
+                
+                # 3. Run the function to get the dictionary of figures
+                dashboard_figs = local_vars['build_dashboard'](df_dash)
+                
+                # 4. Render the charts in a 2x2 Streamlit Grid
+                st.success("✅ Dashboard Generated!")
+                
+                chart_titles = list(dashboard_figs.keys())
+                
+                # Row 1
+                row1_col1, row1_col2 = st.columns(2)
+                with row1_col1:
+                    st.subheader(chart_titles[0])
+                    st.plotly_chart(dashboard_figs[chart_titles[0]], use_container_width=True)
+                with row1_col2:
+                    st.subheader(chart_titles[1])
+                    st.plotly_chart(dashboard_figs[chart_titles[1]], use_container_width=True)
+                    
+                # Row 2
+                row2_col1, row2_col2 = st.columns(2)
+                with row2_col1:
+                    st.subheader(chart_titles[2])
+                    st.plotly_chart(dashboard_figs[chart_titles[2]], use_container_width=True)
+                with row2_col2:
+                    st.subheader(chart_titles[3])
+                    st.plotly_chart(dashboard_figs[chart_titles[3]], use_container_width=True)
+                
+                # 5. Let the user see the code that was written!
+                with st.expander("👀 Peek behind the curtain (Show AI Python Code)"):
+                    st.code(dash_code, language="python")
+
+            except Exception as e:
+                st.error(f"🚨 The AI struggled to build the dashboard. Error details: {e}")
