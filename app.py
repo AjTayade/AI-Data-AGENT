@@ -5,7 +5,7 @@ import sqlite3
 import tempfile
 import PyPDF2
 import docx
-import re             
+import re              
 import numpy as np
 import google.generativeai as genai
 from supabase import create_client, Client
@@ -14,18 +14,13 @@ from langchain_experimental.agents import create_pandas_dataframe_agent
 
 st.set_page_config(page_title="AI Data Agent", layout="wide")
 
-
 # --- 1. SETUP THE BRAIN & THE VAULT ---
 try:
     genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
-
-    # CORRECTED: Using an official Gemini 3 reasoning model ID
-    model = genai.GenerativeModel('gemini-3-flash-preview')
-
+    model = genai.GenerativeModel('gemini-1.5-pro') # Using 1.5-pro as it is the most stable for LangChain Agents
     supabase: Client = create_client(st.secrets["SUPABASE_URL"], st.secrets["SUPABASE_KEY"])
 except Exception as e:
-    # This will now catch and display if the API key itself is missing or invalid
-    st.error(f"Setup Error: Please check your Streamlit Secrets or Model ID. ({e})")
+    st.error(f"Setup Error: Please check your Streamlit Secrets. ({e})")
     st.stop()
     
 # --- 2. FETCH CLOUD DATA ON STARTUP ---
@@ -59,7 +54,6 @@ with colB:
 # --- 3. THE UNIVERSAL AUTO-SAVE LOADER ---
 st.divider()
 st.subheader("📤 Upload New Data")
-# RESTORED: All file types are back!
 uploaded_files = st.file_uploader(
     "Drop your files here", 
     type=["csv", "xlsx", "xls", "json", "db", "sqlite", "pdf", "docx", "txt"], 
@@ -71,15 +65,14 @@ if uploaded_files:
         file_ext = pathlib.Path(file.name).suffix.lower()
         
         try:
-           # -- STRUCTURED DATA --
+            # -- STRUCTURED DATA --
             if file_ext in ['.csv', '.xlsx', '.xls', '.json']:
                 if file.name not in st.session_state['raw_cloud']:
                     if file_ext == '.csv': df = pd.read_csv(file)
                     elif file_ext in ['.xlsx', '.xls']: df = pd.read_excel(file)
                     elif file_ext == '.json': df = pd.read_json(file, orient='records')
                     
-                    # 🛠️ THE FIX: Convert all 'NaN' values to 'None' for JSON compliance
-                    import numpy as np
+                    # Convert NaN to None for strict JSON compliance in Supabase
                     df = df.replace({np.nan: None})
                     
                     with st.spinner(f"Auto-saving {file.name} to cloud..."):
@@ -102,9 +95,10 @@ if uploaded_files:
                 if not tables.empty:
                     for _, row in tables.iterrows():
                         table_name = row['name']
-                        full_name = f"{file.name}_{table_name}" # e.g. mydata.db_users
+                        full_name = f"{file.name}_{table_name}" 
                         if full_name not in st.session_state['raw_cloud']:
                             df = pd.read_sql_query(f"SELECT * FROM {table_name}", conn)
+                            df = df.replace({np.nan: None})
                             with st.spinner(f"Auto-saving SQL table {full_name}..."):
                                 supabase.table('raw_datasets').upsert({'file_name': full_name, 'data': df.to_dict(orient='records')}).execute()
                             st.session_state['raw_cloud'][full_name] = df
@@ -124,7 +118,6 @@ if uploaded_files:
                         doc = docx.Document(file)
                         text_data = "\n".join([para.text for para in doc.paragraphs])
                         
-                    # Trick the database: Pack text into a DataFrame!
                     df = pd.DataFrame([{"document_name": file.name, "content": text_data}])
                     
                     with st.spinner(f"Auto-saving Document {file.name}..."):
@@ -138,7 +131,7 @@ if uploaded_files:
 # --- 4. THE AI DOMAIN SPECIALIST ---
 if st.session_state['raw_cloud']:
     st.divider()
-    st.header("🧠 Step 3: AI Domain Specialist")
+    st.header("🧠 Step 3: Universal Data Sanitizer")
     
     col1, col2 = st.columns(2)
     with col1:
@@ -146,11 +139,10 @@ if st.session_state['raw_cloud']:
     with col2:
         domain_context = st.text_input("Industry/Domain:", value="General Business")
     
-    if st.button("🪄 Run AI Data Cleaning & Analysis", type="primary"):
+    if st.button("🪄 Run AI Data Sanitization", type="primary"):
         df_to_process = st.session_state['raw_cloud'][selected_file]
         
         with st.spinner(f"AI is sanitizing {selected_file}..."):
-            # 1. The "Universal Sanitizer" Prompt
             clean_prompt = f"""
             You are a Senior Data Engineer. Your task is to write a Python function 'clean_data(df)' 
             to sanitize this dataset for any irregularities. 
@@ -168,30 +160,28 @@ if st.session_state['raw_cloud']:
             6. Handle inconsistent casing (e.g., convert all headers to snake_case).
 
             Return ONLY valid executable Python code. NO markdown. NO backticks. NO explanations.
-            Include: import pandas as pd, import numpy as np.
+            Include: import pandas as pd, import numpy as np, import re
             """
 
             try:
-                # 2. Send to Gemini
                 clean_response = model.generate_content(clean_prompt)
                 clean_code = clean_response.text.strip().replace("```python", "").replace("```", "").strip()
                 
-                # 3. Execute the AI's code locally
                 local_vars = {}
                 exec(clean_code, globals(), local_vars)
                 df_cleaned = local_vars['clean_data'](df_to_process)
                 
                 st.success("✅ Data sanitized for all irregularities!")
                 
-                # 4. Display results & Download/Save options
                 clean_name = f"sanitized_{selected_file}"
                 
                 c1, c2 = st.columns(2)
                 with c1:
-                    st.download_button("⬇️ Download Sanitized CSV", df_cleaned.to_csv(index=False), f"{clean_name}.csv", "text/csv")
+                    st.download_button("⬇️ Download Sanitized CSV", df_cleaned.to_csv(index=False).encode('utf-8'), f"{clean_name}.csv", "text/csv")
                 with c2:
                     if st.button(f"💾 Save {clean_name} to Cloud"):
-                        supabase.table('cleaned_datasets').upsert({'file_name': clean_name, 'data': df_cleaned.to_dict(orient='records')}).execute()
+                        df_cleaned_json = df_cleaned.replace({np.nan: None}) # Clean NaNs for DB
+                        supabase.table('cleaned_datasets').upsert({'file_name': clean_name, 'data': df_cleaned_json.to_dict(orient='records')}).execute()
                         st.session_state['clean_cloud'][clean_name] = df_cleaned
                         st.success("Saved!")
 
@@ -208,13 +198,14 @@ if all_chat_data:
     chat_file = st.selectbox("Which dataset do you want to talk to?", list(all_chat_data.keys()))
     df_chat = all_chat_data[chat_file]
     
-    llm = ChatGoogleGenerativeAI(model="gemini-3-flash-preview", temperature=0, google_api_key=st.secrets["GEMINI_API_KEY"])
+    # Using 1.5-pro for LangChain as it is the most stable and reliable for code execution
+    llm = ChatGoogleGenerativeAI(model="gemini-1.5-pro", temperature=0, google_api_key=st.secrets["GEMINI_API_KEY"])
     agent = create_pandas_dataframe_agent(
         llm, 
         df_chat, 
         verbose=True, 
         allow_dangerous_code=True, 
-        handle_parsing_errors=True # <--- ADD THIS
+        handle_parsing_errors=True 
     )
     
     if "messages" not in st.session_state:
@@ -237,4 +228,11 @@ if all_chat_data:
                     st.markdown(answer)
                     st.session_state.messages.append({"role": "assistant", "content": answer})
                 except Exception as e:
-                    st.error(f"Could not calculate that. Error: {e}")
+                    error_str = str(e)
+                    # THE JAILBREAK: Extracting LangChain's hidden answers
+                    if "Could not parse LLM output: `" in error_str:
+                        extracted_answer = error_str.split("Could not parse LLM output: `")[1].split("`")[0]
+                        st.markdown(extracted_answer)
+                        st.session_state.messages.append({"role": "assistant", "content": extracted_answer})
+                    else:
+                        st.error(f"Could not calculate that. Error: {e}")
