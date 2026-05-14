@@ -18,7 +18,7 @@ try:
     genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
 
     # CORRECTED: Using an official Gemini 3 reasoning model ID
-    model = genai.GenerativeModel('gemini-3.0-flash')
+    model = genai.GenerativeModel('gemini-3-flash-preview')
 
     supabase: Client = create_client(st.secrets["SUPABASE_URL"], st.secrets["SUPABASE_KEY"])
 except Exception as e:
