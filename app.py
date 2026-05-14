@@ -17,7 +17,7 @@ st.set_page_config(page_title="AI Data Agent", layout="wide")
 # --- 1. SETUP THE BRAIN & THE VAULT ---
 try:
     genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
-    model = genai.GenerativeModel('gemini-1.5-pro') # Using 1.5-pro as it is the most stable for LangChain Agents
+    model = genai.GenerativeModel('gemini-3-flash-preview') # Using 1.5-pro as it is the most stable for LangChain Agents
     supabase: Client = create_client(st.secrets["SUPABASE_URL"], st.secrets["SUPABASE_KEY"])
 except Exception as e:
     st.error(f"Setup Error: Please check your Streamlit Secrets. ({e})")
@@ -199,7 +199,7 @@ if all_chat_data:
     df_chat = all_chat_data[chat_file]
     
     # Using 1.5-pro for LangChain as it is the most stable and reliable for code execution
-    llm = ChatGoogleGenerativeAI(model="gemini-1.5-pro", temperature=0, google_api_key=st.secrets["GEMINI_API_KEY"])
+    llm = ChatGoogleGenerativeAI(model="gemini-3-flash-preview", temperature=0, google_api_key=st.secrets["GEMINI_API_KEY"])
     agent = create_pandas_dataframe_agent(
         llm, 
         df_chat, 
