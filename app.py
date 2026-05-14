@@ -208,7 +208,7 @@ if all_chat_data:
     chat_file = st.selectbox("Which dataset do you want to talk to?", list(all_chat_data.keys()))
     df_chat = all_chat_data[chat_file]
     
-    llm = ChatGoogleGenerativeAI(model="gemini-1.5-flash", temperature=0, google_api_key=st.secrets["GEMINI_API_KEY"])
+    llm = ChatGoogleGenerativeAI(model="gemini-3-flash-preview", temperature=0, google_api_key=st.secrets["GEMINI_API_KEY"])
     agent = create_pandas_dataframe_agent(llm, df_chat, verbose=True, allow_dangerous_code=True)
     
     if "messages" not in st.session_state:
