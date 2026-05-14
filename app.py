@@ -222,17 +222,23 @@ if all_chat_data:
             
         with st.chat_message("assistant"):
             with st.spinner("Crunching the numbers..."):
-                try:
+               try:
                     response = agent.invoke(prompt)
                     answer = response["output"]
                     st.markdown(answer)
                     st.session_state.messages.append({"role": "assistant", "content": answer})
                 except Exception as e:
                     error_str = str(e)
-                    # THE JAILBREAK: Extracting LangChain's hidden answers
-                    if "Could not parse LLM output: `" in error_str:
-                        extracted_answer = error_str.split("Could not parse LLM output: `")[1].split("`")[0]
-                        st.markdown(extracted_answer)
-                        st.session_state.messages.append({"role": "assistant", "content": extracted_answer})
+                    # THE SMARTER JAILBREAK
+                    if "Could not parse LLM output:" in error_str:
+                        # 1. Split away the start of the LangChain error
+                        extracted = error_str.split("Could not parse LLM output:")[1]
+                        # 2. Split away the troubleshooting link at the end
+                        extracted = extracted.split("For troubleshooting, visit:")[0]
+                        # 3. Clean off any leftover backticks or spaces on the edges
+                        clean_answer = extracted.strip(" `\n")
+                        
+                        st.markdown(clean_answer)
+                        st.session_state.messages.append({"role": "assistant", "content": clean_answer})
                     else:
                         st.error(f"Could not calculate that. Error: {e}")
