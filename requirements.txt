@@ -7,5 +7,4 @@ langchain-experimental
 PyPDF2
 python-docx
 supabase
-import re             
-import numpy as np
+
