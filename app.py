@@ -199,7 +199,7 @@ if all_chat_data:
     df_chat = all_chat_data[chat_file]
     
     # Using 1.5-pro for LangChain as it is the most stable and reliable for code execution
-    llm = ChatGoogleGenerativeAI(model="gemini-1.5-pro", temperature=0, google_api_key=st.secrets["GEMINI_API_KEY"])
+    llm = ChatGoogleGenerativeAI(model="gemini-3-flash-preview", temperature=0, google_api_key=st.secrets["GEMINI_API_KEY"])
     agent = create_pandas_dataframe_agent(
         llm, 
         df_chat, 
