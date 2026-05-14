@@ -209,7 +209,13 @@ if all_chat_data:
     df_chat = all_chat_data[chat_file]
     
     llm = ChatGoogleGenerativeAI(model="gemini-3-flash-preview", temperature=0, google_api_key=st.secrets["GEMINI_API_KEY"])
-    agent = create_pandas_dataframe_agent(llm, df_chat, verbose=True, allow_dangerous_code=True)
+    agent = create_pandas_dataframe_agent(
+        llm, 
+        df_chat, 
+        verbose=True, 
+        allow_dangerous_code=True, 
+        handle_parsing_errors=True # <--- ADD THIS
+    )
     
     if "messages" not in st.session_state:
         st.session_state.messages = []
