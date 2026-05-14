@@ -71,15 +71,22 @@ if uploaded_files:
         file_ext = pathlib.Path(file.name).suffix.lower()
         
         try:
-            # -- STRUCTURED DATA --
+           # -- STRUCTURED DATA --
             if file_ext in ['.csv', '.xlsx', '.xls', '.json']:
                 if file.name not in st.session_state['raw_cloud']:
                     if file_ext == '.csv': df = pd.read_csv(file)
                     elif file_ext in ['.xlsx', '.xls']: df = pd.read_excel(file)
                     elif file_ext == '.json': df = pd.read_json(file, orient='records')
                     
+                    # 🛠️ THE FIX: Convert all 'NaN' values to 'None' for JSON compliance
+                    import numpy as np
+                    df = df.replace({np.nan: None})
+                    
                     with st.spinner(f"Auto-saving {file.name} to cloud..."):
-                        supabase.table('raw_datasets').upsert({'file_name': file.name, 'data': df.to_dict(orient='records')}).execute()
+                        supabase.table('raw_datasets').upsert({
+                            'file_name': file.name, 
+                            'data': df.to_dict(orient='records')
+                        }).execute()
                     st.session_state['raw_cloud'][file.name] = df 
                     st.success(f"✅ Loaded and saved: {file.name}")
             
