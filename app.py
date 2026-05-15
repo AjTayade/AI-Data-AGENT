@@ -328,6 +328,8 @@ if all_chat_data:
 
             except Exception as e:
                 st.error(f"🚨 The AI struggled to build the dashboard. Error details: {e}")'''
+
+
 import streamlit as st
 import pandas as pd
 import pathlib
@@ -354,7 +356,7 @@ except Exception as e:
     st.error(f"Setup Error: Please check your Streamlit Secrets. ({e})")
     st.stop()
 
-# --- 2. THE BOUNCER (LOGIN / REGISTER) ---
+# --- 2. THE BOUNCER (LOGIN / REGISTER WITH NAME) ---
 if 'user' not in st.session_state:
     st.session_state['user'] = None
 
@@ -378,20 +380,29 @@ if st.session_state['user'] is None:
                     st.error("Login failed. Please check your credentials.")
                     
         with auth_tab2:
+            reg_name = st.text_input("First Name", key="reg_name")
             reg_email = st.text_input("New Email", key="reg_email")
             reg_pass = st.text_input("New Password", type="password", key="reg_pass")
             if st.button("Register", use_container_width=True):
                 try:
-                    response = supabase.auth.sign_up({"email": reg_email, "password": reg_pass})
+                    # Save the name in Supabase's secure user metadata
+                    response = supabase.auth.sign_up({
+                        "email": reg_email, 
+                        "password": reg_pass,
+                        "options": {"data": {"first_name": reg_name}}
+                    })
                     st.success("Registration successful! You can now log in.")
                 except Exception as e:
                     st.error(f"Registration failed: {e}")
                     
     st.stop() # Blocks the rest of the app if not logged in
 
-# --- 3. NOTEBOOK ARCHITECTURE (SIDEBAR) ---
-st.sidebar.title("📚 My Workspaces")
-st.sidebar.caption(f"Logged in as: **{st.session_state['user'].email}**")
+# --- 3. THE SIDEBAR (PROFILE & NOTEBOOKS) ---
+user_name = st.session_state['user'].user_metadata.get('first_name', 'User')
+
+st.sidebar.markdown("### 👤 My Profile")
+st.sidebar.markdown(f"**Name:** {user_name}")
+st.sidebar.markdown(f"**Email:** {st.session_state['user'].email}")
 
 if st.sidebar.button("🚪 Log Out", use_container_width=True):
     st.session_state['user'] = None
@@ -400,14 +411,15 @@ if st.sidebar.button("🚪 Log Out", use_container_width=True):
 
 st.sidebar.divider()
 
-if 'active_notebook' not in st.session_state:
-    st.session_state['active_notebook'] = "Default Notebook"
-
+# Notebook Management
 if 'notebook_list' not in st.session_state:
-    st.session_state['notebook_list'] = ["Default Notebook"]
+    st.session_state['notebook_list'] = []
 
-st.sidebar.subheader("Create New Notebook")
-new_nb_name = st.sidebar.text_input("Notebook Name", placeholder="e.g., Q3 Financials", label_visibility="collapsed")
+if 'active_notebook' not in st.session_state:
+    st.session_state['active_notebook'] = None
+
+st.sidebar.markdown("### 📚 My Notebooks")
+new_nb_name = st.sidebar.text_input("Create New Notebook:", placeholder="e.g., Q3 Financials")
 
 if st.sidebar.button("➕ Add Notebook", use_container_width=True):
     if new_nb_name and new_nb_name not in st.session_state['notebook_list']:
@@ -415,36 +427,40 @@ if st.sidebar.button("➕ Add Notebook", use_container_width=True):
         st.session_state['active_notebook'] = new_nb_name
         st.rerun()
 
-st.sidebar.divider()
+if st.session_state['notebook_list']:
+    st.sidebar.divider()
+    st.sidebar.markdown("**Switch Notebook:**")
+    st.session_state['active_notebook'] = st.sidebar.radio(
+        "Select active workspace:", 
+        st.session_state['notebook_list'],
+        label_visibility="collapsed"
+    )
 
-st.sidebar.subheader("Switch Notebook")
-st.session_state['active_notebook'] = st.sidebar.radio(
-    "Select active workspace:", 
-    st.session_state['notebook_list'],
-    label_visibility="collapsed"
-)
+# --- 4. THE NOTEBOOK ENFORCER ---
+if st.session_state['active_notebook'] is None:
+    st.warning("👋 Welcome! Please create your first Notebook in the sidebar to begin working.")
+    st.stop()
 
-st.title(f"📂 Workspace: {st.session_state['active_notebook']}")
+st.title(f"📂 Notebook: {st.session_state['active_notebook']}")
 st.divider()
 
+# --- 5. SECURE CLOUD FETCHING ---
+# We ONLY fetch data for THIS user AND THIS notebook
+user_id = st.session_state['user'].id
+nb_name = st.session_state['active_notebook']
 
-# ==============================================================================
-# ⚠️ OLD CODE BELOW - WAITING FOR STEP 4 TO BE REWIRED TO THE NEW DATABASE ⚠️
-# ==============================================================================
+st.session_state['raw_cloud'] = {}
+st.session_state['clean_cloud'] = {}
 
-# --- 4. FETCH CLOUD DATA (OLD VERSION) ---
-if 'raw_cloud' not in st.session_state:
-    st.session_state['raw_cloud'] = {}
-    st.session_state['clean_cloud'] = {}
-    with st.spinner("Syncing with Supabase Cloud..."):
-        try:
-            raw_res = supabase.table("raw_datasets").select("file_name, data").execute()
-            st.session_state['raw_cloud'] = {r['file_name']: pd.DataFrame(r['data']) for r in raw_res.data}
-            
-            clean_res = supabase.table("cleaned_datasets").select("file_name, data").execute()
-            st.session_state['clean_cloud'] = {r['file_name']: pd.DataFrame(r['data']) for r in clean_res.data}
-        except Exception as e:
-            st.warning(f"Could not fetch cloud data: {e}")
+with st.spinner(f"Loading {nb_name} secure vault..."):
+    try:
+        raw_res = supabase.table("raw_datasets").select("file_name, data").eq("user_id", user_id).eq("notebook_name", nb_name).execute()
+        st.session_state['raw_cloud'] = {r['file_name']: pd.DataFrame(r['data']) for r in raw_res.data}
+        
+        clean_res = supabase.table("cleaned_datasets").select("file_name, data").eq("user_id", user_id).eq("notebook_name", nb_name).execute()
+        st.session_state['clean_cloud'] = {r['file_name']: pd.DataFrame(r['data']) for r in clean_res.data}
+    except Exception as e:
+        st.warning(f"Could not fetch cloud data: {e}")
 
 colA, colB = st.columns(2)
 with colA:
@@ -460,11 +476,11 @@ with colB:
                 st.write(f"**{name}**")
                 st.dataframe(df.head(3), use_container_width=True)
 
-# --- 5. THE UNIVERSAL AUTO-SAVE LOADER (OLD VERSION) ---
+# --- 6. SECURE AUTO-SAVE LOADER ---
 st.divider()
-st.subheader("📤 Upload New Data")
+st.subheader("📤 Step 1: Upload New Data")
 uploaded_files = st.file_uploader(
-    "Drop your files here", 
+    f"Drop files to save into '{nb_name}'", 
     type=["csv", "xlsx", "xls", "json", "db", "sqlite", "pdf", "docx", "txt"], 
     accept_multiple_files=True
 )
@@ -479,30 +495,17 @@ if uploaded_files:
                     elif file_ext in ['.xlsx', '.xls']: df = pd.read_excel(file)
                     elif file_ext == '.json': df = pd.read_json(file, orient='records')
                     df = df.replace({np.nan: None})
-                    with st.spinner(f"Auto-saving {file.name} to cloud..."):
-                        supabase.table('raw_datasets').upsert({'file_name': file.name, 'data': df.to_dict(orient='records')}).execute()
+                    with st.spinner(f"Auto-saving {file.name}..."):
+                        # NOW WE ATTACH THE LOCK AND FOLDER
+                        supabase.table('raw_datasets').upsert({
+                            'file_name': file.name, 
+                            'data': df.to_dict(orient='records'),
+                            'user_id': user_id,
+                            'notebook_name': nb_name
+                        }).execute()
                     st.session_state['raw_cloud'][file.name] = df 
                     st.success(f"✅ Loaded and saved: {file.name}")
-            
-            elif file_ext in ['.db', '.sqlite']:
-                with tempfile.NamedTemporaryFile(delete=False, suffix=file_ext) as tmp:
-                    tmp.write(file.getvalue())
-                    tmp_path = tmp.name
-                conn = sqlite3.connect(tmp_path)
-                tables = pd.read_sql_query("SELECT name FROM sqlite_master WHERE type='table';", conn)
-                if not tables.empty:
-                    for _, row in tables.iterrows():
-                        table_name = row['name']
-                        full_name = f"{file.name}_{table_name}" 
-                        if full_name not in st.session_state['raw_cloud']:
-                            df = pd.read_sql_query(f"SELECT * FROM {table_name}", conn)
-                            df = df.replace({np.nan: None})
-                            with st.spinner(f"Auto-saving SQL table {full_name}..."):
-                                supabase.table('raw_datasets').upsert({'file_name': full_name, 'data': df.to_dict(orient='records')}).execute()
-                            st.session_state['raw_cloud'][full_name] = df
-                    st.success(f"✅ Extracted and saved SQL Database: {file.name}")
-                conn.close()
-
+            # Text Docs
             elif file_ext in ['.txt', '.pdf', '.docx']:
                 if file.name not in st.session_state['raw_cloud']:
                     text_data = ""
@@ -515,16 +518,21 @@ if uploaded_files:
                         text_data = "\n".join([para.text for para in doc.paragraphs])
                     df = pd.DataFrame([{"document_name": file.name, "content": text_data}])
                     with st.spinner(f"Auto-saving Document {file.name}..."):
-                        supabase.table('raw_datasets').upsert({'file_name': file.name, 'data': df.to_dict(orient='records')}).execute()
+                        supabase.table('raw_datasets').upsert({
+                            'file_name': file.name, 
+                            'data': df.to_dict(orient='records'),
+                            'user_id': user_id,
+                            'notebook_name': nb_name
+                        }).execute()
                     st.session_state['raw_cloud'][file.name] = df 
                     st.success(f"✅ Loaded and saved Document: {file.name}")
         except Exception as e:
             st.error(f"Error loading {file.name}: {e}")
 
-# --- 6. THE AI DOMAIN SPECIALIST (OLD VERSION) ---
+# --- 7. SECURE SANITIZER ---
 if st.session_state['raw_cloud']:
     st.divider()
-    st.header("🧠 Step 3: Universal Data Sanitizer")
+    st.header("🧠 Step 2: Universal Data Sanitizer")
     selected_file = st.selectbox("Select a raw dataset to process:", list(st.session_state['raw_cloud'].keys()))
     if st.button("🪄 Run Exhaustive AI Sanitization", type="primary"):
         df_to_process = st.session_state['raw_cloud'][selected_file]
@@ -556,11 +564,9 @@ if st.session_state['raw_cloud']:
                 b_col, a_col = st.columns(2)
                 with b_col:
                     st.markdown("### 🔴 Before (Raw)")
-                    st.caption(f"Rows: **{df_to_process.shape[0]}** | Columns: **{df_to_process.shape[1]}** | Total Missing: **{df_to_process.isna().sum().sum()}**")
                     st.dataframe(df_to_process.head(4), use_container_width=True)
                 with a_col:
                     st.markdown("### 🟢 After (Sanitized)")
-                    st.caption(f"Rows: **{df_cleaned.shape[0]}** | Columns: **{df_cleaned.shape[1]}** | Total Missing: **{df_cleaned.isna().sum().sum()}**")
                     st.dataframe(df_cleaned.head(4), use_container_width=True)
                 
                 clean_name = f"sanitized_{selected_file}"
@@ -568,24 +574,29 @@ if st.session_state['raw_cloud']:
                 with c1:
                     st.download_button("⬇️ Download Sanitized CSV", df_cleaned.to_csv(index=False).encode('utf-8'), f"{clean_name}.csv", "text/csv")
                 with c2:
-                    if st.button(f"💾 Save {clean_name} to Cloud"):
+                    if st.button(f"💾 Save {clean_name} to Notebook"):
                         df_cleaned_json = df_cleaned.replace({np.nan: None})
-                        supabase.table('cleaned_datasets').upsert({'file_name': clean_name, 'data': df_cleaned_json.to_dict(orient='records')}).execute()
+                        # ATTACH LOCK AND FOLDER FOR SANITIZED DATA
+                        supabase.table('cleaned_datasets').upsert({
+                            'file_name': clean_name, 
+                            'data': df_cleaned_json.to_dict(orient='records'),
+                            'user_id': user_id,
+                            'notebook_name': nb_name
+                        }).execute()
                         st.session_state['clean_cloud'][clean_name] = df_cleaned
                         st.success("Saved to Cloud!")
             except Exception as e:
                 st.error(f"🚨 Sanitization failed: {e}")
 
-# --- 7. THE DATA WHISPERER (OLD VERSION) ---
+# --- 8. SECURE CHAT ---
 all_chat_data = {**st.session_state.get('raw_cloud', {}), **st.session_state.get('clean_cloud', {})}
 
 if all_chat_data:
     st.divider()
-    st.header("💬 Chat with your Data")
+    st.header("💬 Step 3: Chat with your Data")
     chat_file = st.selectbox("Which dataset do you want to talk to?", list(all_chat_data.keys()))
     df_chat = all_chat_data[chat_file]
     
-    # Strictly updated to gemini-3-flash-preview
     llm = ChatGoogleGenerativeAI(model="gemini-3-flash-preview", temperature=0, google_api_key=st.secrets["GEMINI_API_KEY"])
     agent = create_pandas_dataframe_agent(llm, df_chat, verbose=True, allow_dangerous_code=True, handle_parsing_errors=True)
     
@@ -615,10 +626,10 @@ if all_chat_data:
                     else:
                         st.error(f"Could not calculate that. Error: {e}")
 
-# --- 8. THE EXECUTIVE BI DASHBOARD (OLD VERSION) ---
+# --- 9. SECURE DASHBOARD ---
 if all_chat_data:
     st.divider()
-    st.header("📊 Multi-File Executive Dashboard")
+    st.header("📊 Step 4: Multi-File Dashboard")
     dash_files = st.multiselect("Select dataset(s) to include in the dashboard:", list(all_chat_data.keys()), default=list(all_chat_data.keys())[:1])
     
     if dash_files:
@@ -673,8 +684,5 @@ if all_chat_data:
                     with row2_col2:
                         st.subheader(chart_titles[3])
                         st.plotly_chart(dashboard_figs[chart_titles[3]], use_container_width=True)
-                    
-                    with st.expander("👀 Peek behind the curtain (Show AI Python Code)"):
-                        st.code(dash_code, language="python")
                 except Exception as e:
                     st.error(f"🚨 The AI struggled to build the multi-file dashboard. Error details: {e}")
