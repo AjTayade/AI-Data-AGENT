@@ -22,7 +22,7 @@ st.set_page_config(page_title="AI Data Agent SaaS", layout="wide")
 # ──────────────────────────────────────────────────────────────
 try:
     genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
-    model = genai.GenerativeModel('gemini-3-flash-preview')
+    model = genai.GenerativeModel('gemini-2.0-flash')
     supabase: Client = create_client(st.secrets["SUPABASE_URL"], st.secrets["SUPABASE_KEY"])
 
     if 'session' in st.session_state and st.session_state['session'] is not None:
@@ -82,6 +82,44 @@ if st.session_state['user'] is None:
     st.stop()
 
 # ──────────────────────────────────────────────────────────────
+# 2.5  SESSION RESTORE  (runs once per login after any refresh)
+# ──────────────────────────────────────────────────────────────
+# On a hard refresh Streamlit wipes st.session_state, so notebook_list
+# and active_notebook disappear even though the data is safe in Supabase.
+# This block rebuilds them from Supabase the first time the user lands on
+# the page after a refresh — before anything in the sidebar renders.
+_uid = st.session_state['user'].id
+
+if not st.session_state.get('_session_restored'):
+    try:
+        # Collect every distinct notebook_name this user owns across both tables
+        _raw_nb   = supabase.table("raw_datasets").select("notebook_name") \
+                        .eq("user_id", _uid).execute()
+        _clean_nb = supabase.table("cleaned_datasets").select("notebook_name") \
+                        .eq("user_id", _uid).execute()
+
+        _all_nb = sorted(set(
+            [r['notebook_name'] for r in _raw_nb.data]  +
+            [r['notebook_name'] for r in _clean_nb.data]
+        ))
+
+        # Restore notebook list (don't overwrite if the user already has one
+        # in this session, e.g. they just created a new notebook)
+        if _all_nb and not st.session_state.get('notebook_list'):
+            st.session_state['notebook_list'] = _all_nb
+
+        # Restore active notebook — default to the first one found
+        if (st.session_state.get('notebook_list')
+                and st.session_state.get('active_notebook') is None):
+            st.session_state['active_notebook'] = st.session_state['notebook_list'][0]
+
+        st.session_state['_session_restored'] = True
+
+    except Exception as _restore_err:
+        # Non-fatal: user can still create a new notebook manually
+        st.session_state['_session_restored'] = True
+
+# ──────────────────────────────────────────────────────────────
 # 3. THE SIDEBAR (PROFILE & NOTEBOOKS)
 # ──────────────────────────────────────────────────────────────
 user_name = st.session_state['user'].user_metadata.get('first_name', 'User')
@@ -91,8 +129,10 @@ st.sidebar.markdown(f"**Name:** {user_name}")
 st.sidebar.markdown(f"**Email:** {st.session_state['user'].email}")
 
 if st.sidebar.button("🚪 Log Out", use_container_width=True):
-    st.session_state['user']    = None
-    st.session_state['session'] = None
+    # Clear everything so the next login starts with a clean restore
+    for _k in ['user', 'session', 'notebook_list', 'active_notebook',
+               'raw_cloud', 'clean_cloud', 'messages', '_session_restored']:
+        st.session_state.pop(_k, None)
     supabase.auth.sign_out()
     st.rerun()
 
@@ -160,20 +200,34 @@ st.divider()
 user_id = st.session_state['user'].id
 nb_name = st.session_state['active_notebook']
 
-st.session_state['raw_cloud']   = {}
-st.session_state['clean_cloud'] = {}
+# Only re-fetch from Supabase when the active notebook changes OR when
+# raw_cloud/clean_cloud are missing (e.g. first load after a refresh).
+# This prevents wiping already-loaded data on every Streamlit re-run.
+_nb_changed = (st.session_state.get('_loaded_nb') != nb_name)
 
-with st.spinner(f"Loading {nb_name} secure vault..."):
-    try:
-        raw_res = supabase.table("raw_datasets").select("file_name, data") \
-            .eq("user_id", user_id).eq("notebook_name", nb_name).execute()
-        st.session_state['raw_cloud'] = {r['file_name']: pd.DataFrame(r['data']) for r in raw_res.data}
+if _nb_changed or 'raw_cloud' not in st.session_state:
+    st.session_state['raw_cloud']   = {}
+    st.session_state['clean_cloud'] = {}
 
-        clean_res = supabase.table("cleaned_datasets").select("file_name, data") \
-            .eq("user_id", user_id).eq("notebook_name", nb_name).execute()
-        st.session_state['clean_cloud'] = {r['file_name']: pd.DataFrame(r['data']) for r in clean_res.data}
-    except Exception as e:
-        st.warning(f"Could not fetch cloud data: {e}")
+    with st.spinner(f"Loading {nb_name} secure vault..."):
+        try:
+            raw_res = supabase.table("raw_datasets").select("file_name, data") \
+                .eq("user_id", user_id).eq("notebook_name", nb_name).execute()
+            st.session_state['raw_cloud'] = {
+                r['file_name']: pd.DataFrame(r['data']) for r in raw_res.data
+            }
+
+            clean_res = supabase.table("cleaned_datasets").select("file_name, data") \
+                .eq("user_id", user_id).eq("notebook_name", nb_name).execute()
+            st.session_state['clean_cloud'] = {
+                r['file_name']: pd.DataFrame(r['data']) for r in clean_res.data
+            }
+
+            # Mark which notebook is currently loaded so we don't re-fetch unnecessarily
+            st.session_state['_loaded_nb'] = nb_name
+
+        except Exception as e:
+            st.warning(f"Could not fetch cloud data: {e}")
 
 # ──────────────────────────────────────────────────────────────
 # TABBED ARCHITECTURE
