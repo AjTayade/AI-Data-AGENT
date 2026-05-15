@@ -1,4 +1,4 @@
-import streamlit as st
+'''import streamlit as st
 import pandas as pd
 import pathlib
 import sqlite3
@@ -327,4 +327,71 @@ if all_chat_data:
                     st.code(dash_code, language="python")
 
             except Exception as e:
-                st.error(f"🚨 The AI struggled to build the dashboard. Error details: {e}")
+                st.error(f"🚨 The AI struggled to build the dashboard. Error details: {e}")'''
+
+import streamlit as st
+import pandas as pd
+import pathlib
+import sqlite3
+import tempfile
+import PyPDF2
+import docx
+import re              
+import numpy as np
+import google.generativeai as genai
+from supabase import create_client, Client
+from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_experimental.agents import create_pandas_dataframe_agent
+
+st.set_page_config(page_title="AI Data Agent SaaS", layout="wide")
+
+# --- 1. SETUP THE BRAIN & THE VAULT ---
+try:
+    genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
+    model = genai.GenerativeModel('gemini-1.5-pro') 
+    supabase: Client = create_client(st.secrets["SUPABASE_URL"], st.secrets["SUPABASE_KEY"])
+except Exception as e:
+    st.error(f"Setup Error: Please check your Streamlit Secrets. ({e})")
+    st.stop()
+
+# --- 2. THE BOUNCER (LOGIN / REGISTER) ---
+# Check if the user is already remembered in this session
+if 'user' not in st.session_state:
+    st.session_state['user'] = None
+
+# If they are NOT logged in, show the door and block the app
+if st.session_state['user'] is None:
+    # Create a clean, centered layout for the login box
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        st.title("🔐 Welcome to AI Data Agent")
+        st.markdown("Please log in to access your secure workspace.")
+        
+        auth_tab1, auth_tab2 = st.tabs(["Login", "Register"])
+        
+        with auth_tab1:
+            log_email = st.text_input("Email", key="log_email")
+            log_pass = st.text_input("Password", type="password", key="log_pass")
+            if st.button("Login", use_container_width=True, type="primary"):
+                try:
+                    response = supabase.auth.sign_in_with_password({"email": log_email, "password": log_pass})
+                    st.session_state['user'] = response.user
+                    st.rerun() # Refresh the page to let them in!
+                except Exception as e:
+                    st.error("Login failed. Please check your credentials.")
+                    
+        with auth_tab2:
+            reg_email = st.text_input("New Email", key="reg_email")
+            reg_pass = st.text_input("New Password", type="password", key="reg_pass")
+            if st.button("Register", use_container_width=True):
+                try:
+                    # Because of Step 1, this works instantly without emails!
+                    response = supabase.auth.sign_up({"email": reg_email, "password": reg_pass})
+                    st.success("Registration successful! You can now log in.")
+                except Exception as e:
+                    st.error(f"Registration failed: {e}")
+                    
+    # THE MOST IMPORTANT LINE: Stop the rest of the Python file from running!
+    st.stop() 
+
+# --- (END OF THE BOUNCER) ---
