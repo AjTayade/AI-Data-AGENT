@@ -10,6 +10,7 @@ import numpy as np
 import json
 import io
 import time
+import plotly.express as px
 import google.generativeai as genai
 from supabase import create_client, Client
 from langchain_google_genai import ChatGoogleGenerativeAI
