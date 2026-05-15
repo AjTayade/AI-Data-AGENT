@@ -22,7 +22,7 @@ st.set_page_config(page_title="AI Data Agent SaaS", layout="wide")
 # ──────────────────────────────────────────────────────────────
 try:
     genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
-    model = genai.GenerativeModel('gemini-2.0-flash')
+    model = genai.GenerativeModel('gemini-3-flash-preview')
     supabase: Client = create_client(st.secrets["SUPABASE_URL"], st.secrets["SUPABASE_KEY"])
 
     if 'session' in st.session_state and st.session_state['session'] is not None:
