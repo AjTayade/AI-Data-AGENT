@@ -329,7 +329,6 @@ if all_chat_data:
             except Exception as e:
                 st.error(f"🚨 The AI struggled to build the dashboard. Error details: {e}")'''
 
-
 import streamlit as st
 import pandas as pd
 import pathlib
@@ -349,9 +348,15 @@ st.set_page_config(page_title="AI Data Agent SaaS", layout="wide")
 # --- 1. SETUP THE BRAIN & THE VAULT ---
 try:
     genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
-    # Strictly using the requested model
     model = genai.GenerativeModel('gemini-3-flash-preview') 
     supabase: Client = create_client(st.secrets["SUPABASE_URL"], st.secrets["SUPABASE_KEY"])
+    
+    # THE AMNESIA CURE: Re-attach the secure token to the database connection on every refresh!
+    if 'session' in st.session_state and st.session_state['session'] is not None:
+        try:
+            supabase.auth.set_session(st.session_state['session'].access_token, st.session_state['session'].refresh_token)
+        except Exception:
+            pass # If token expires, it will force a re-login naturally
 except Exception as e:
     st.error(f"Setup Error: Please check your Streamlit Secrets. ({e})")
     st.stop()
@@ -359,6 +364,8 @@ except Exception as e:
 # --- 2. THE BOUNCER (LOGIN / REGISTER WITH NAME) ---
 if 'user' not in st.session_state:
     st.session_state['user'] = None
+if 'session' not in st.session_state:
+    st.session_state['session'] = None
 
 if st.session_state['user'] is None:
     col1, col2, col3 = st.columns([1, 2, 1])
@@ -375,6 +382,7 @@ if st.session_state['user'] is None:
                 try:
                     response = supabase.auth.sign_in_with_password({"email": log_email, "password": log_pass})
                     st.session_state['user'] = response.user
+                    st.session_state['session'] = response.session # SAVE THE SECURE TOKEN
                     st.rerun() 
                 except Exception as e:
                     st.error("Login failed. Please check your credentials.")
@@ -385,7 +393,6 @@ if st.session_state['user'] is None:
             reg_pass = st.text_input("New Password", type="password", key="reg_pass")
             if st.button("Register", use_container_width=True):
                 try:
-                    # Save the name in Supabase's secure user metadata
                     response = supabase.auth.sign_up({
                         "email": reg_email, 
                         "password": reg_pass,
@@ -406,12 +413,12 @@ st.sidebar.markdown(f"**Email:** {st.session_state['user'].email}")
 
 if st.sidebar.button("🚪 Log Out", use_container_width=True):
     st.session_state['user'] = None
+    st.session_state['session'] = None # CLEAR THE TOKEN
     supabase.auth.sign_out()
     st.rerun()
 
 st.sidebar.divider()
 
-# Notebook Management
 if 'notebook_list' not in st.session_state:
     st.session_state['notebook_list'] = []
 
@@ -445,7 +452,6 @@ st.title(f"📂 Notebook: {st.session_state['active_notebook']}")
 st.divider()
 
 # --- 5. SECURE CLOUD FETCHING ---
-# We ONLY fetch data for THIS user AND THIS notebook
 user_id = st.session_state['user'].id
 nb_name = st.session_state['active_notebook']
 
@@ -476,7 +482,7 @@ with colB:
                 st.write(f"**{name}**")
                 st.dataframe(df.head(3), use_container_width=True)
 
-# --- 6. SECURE AUTO-SAVE LOADER ---
+# --- 6. SECURE AUTO-SAVE LOADER (NOW WITH BUTTON) ---
 st.divider()
 st.subheader("📤 Step 1: Upload New Data")
 uploaded_files = st.file_uploader(
@@ -486,48 +492,57 @@ uploaded_files = st.file_uploader(
 )
 
 if uploaded_files:
-    for file in uploaded_files:
-        file_ext = pathlib.Path(file.name).suffix.lower()
-        try:
-            if file_ext in ['.csv', '.xlsx', '.xls', '.json']:
-                if file.name not in st.session_state['raw_cloud']:
-                    if file_ext == '.csv': df = pd.read_csv(file)
-                    elif file_ext in ['.xlsx', '.xls']: df = pd.read_excel(file)
-                    elif file_ext == '.json': df = pd.read_json(file, orient='records')
-                    df = df.replace({np.nan: None})
-                    with st.spinner(f"Auto-saving {file.name}..."):
-                        # NOW WE ATTACH THE LOCK AND FOLDER
-                        supabase.table('raw_datasets').upsert({
-                            'file_name': file.name, 
-                            'data': df.to_dict(orient='records'),
-                            'user_id': user_id,
-                            'notebook_name': nb_name
-                        }).execute()
-                    st.session_state['raw_cloud'][file.name] = df 
-                    st.success(f"✅ Loaded and saved: {file.name}")
-            # Text Docs
-            elif file_ext in ['.txt', '.pdf', '.docx']:
-                if file.name not in st.session_state['raw_cloud']:
-                    text_data = ""
-                    if file_ext == '.txt': text_data = file.getvalue().decode("utf-8")
-                    elif file_ext == '.pdf':
-                        pdf_reader = PyPDF2.PdfReader(file)
-                        text_data = "".join([page.extract_text() + "\n" for page in pdf_reader.pages])
-                    elif file_ext == '.docx':
-                        doc = docx.Document(file)
-                        text_data = "\n".join([para.text for para in doc.paragraphs])
-                    df = pd.DataFrame([{"document_name": file.name, "content": text_data}])
-                    with st.spinner(f"Auto-saving Document {file.name}..."):
-                        supabase.table('raw_datasets').upsert({
-                            'file_name': file.name, 
-                            'data': df.to_dict(orient='records'),
-                            'user_id': user_id,
-                            'notebook_name': nb_name
-                        }).execute()
-                    st.session_state['raw_cloud'][file.name] = df 
-                    st.success(f"✅ Loaded and saved Document: {file.name}")
-        except Exception as e:
-            st.error(f"Error loading {file.name}: {e}")
+    # EXPLICIT UPLOAD BUTTON
+    if st.button(f"🚀 Upload {len(uploaded_files)} File(s) to Database", type="primary"):
+        for file in uploaded_files:
+            file_ext = pathlib.Path(file.name).suffix.lower()
+            try:
+                if file_ext in ['.csv', '.xlsx', '.xls', '.json']:
+                    if file.name not in st.session_state['raw_cloud']:
+                        if file_ext == '.csv': df = pd.read_csv(file)
+                        elif file_ext in ['.xlsx', '.xls']: df = pd.read_excel(file)
+                        elif file_ext == '.json': 
+                            try:
+                                df = pd.read_json(file, orient='records')
+                            except ValueError:
+                                # JSON TRAILING DATA FALLBACK
+                                file.seek(0)
+                                df = pd.read_json(file, lines=True)
+                        
+                        df = df.replace({np.nan: None})
+                        with st.spinner(f"Auto-saving {file.name}..."):
+                            supabase.table('raw_datasets').upsert({
+                                'file_name': file.name, 
+                                'data': df.to_dict(orient='records'),
+                                'user_id': user_id,
+                                'notebook_name': nb_name
+                            }).execute()
+                        st.session_state['raw_cloud'][file.name] = df 
+                        st.success(f"✅ Loaded and saved: {file.name}")
+                
+                # Text Docs
+                elif file_ext in ['.txt', '.pdf', '.docx']:
+                    if file.name not in st.session_state['raw_cloud']:
+                        text_data = ""
+                        if file_ext == '.txt': text_data = file.getvalue().decode("utf-8")
+                        elif file_ext == '.pdf':
+                            pdf_reader = PyPDF2.PdfReader(file)
+                            text_data = "".join([page.extract_text() + "\n" for page in pdf_reader.pages])
+                        elif file_ext == '.docx':
+                            doc = docx.Document(file)
+                            text_data = "\n".join([para.text for para in doc.paragraphs])
+                        df = pd.DataFrame([{"document_name": file.name, "content": text_data}])
+                        with st.spinner(f"Auto-saving Document {file.name}..."):
+                            supabase.table('raw_datasets').upsert({
+                                'file_name': file.name, 
+                                'data': df.to_dict(orient='records'),
+                                'user_id': user_id,
+                                'notebook_name': nb_name
+                            }).execute()
+                        st.session_state['raw_cloud'][file.name] = df 
+                        st.success(f"✅ Loaded and saved Document: {file.name}")
+            except Exception as e:
+                st.error(f"Error loading {file.name}: {e}")
 
 # --- 7. SECURE SANITIZER ---
 if st.session_state['raw_cloud']:
@@ -576,7 +591,6 @@ if st.session_state['raw_cloud']:
                 with c2:
                     if st.button(f"💾 Save {clean_name} to Notebook"):
                         df_cleaned_json = df_cleaned.replace({np.nan: None})
-                        # ATTACH LOCK AND FOLDER FOR SANITIZED DATA
                         supabase.table('cleaned_datasets').upsert({
                             'file_name': clean_name, 
                             'data': df_cleaned_json.to_dict(orient='records'),
