@@ -802,7 +802,6 @@ FUNCTION CONTRACT:
 
 
                             '''
-
 import streamlit as st
 import pandas as pd
 import pathlib
@@ -830,6 +829,7 @@ st.set_page_config(page_title="AI Data Agent SaaS", layout="wide")
 # ──────────────────────────────────────────────────────────────
 try:
     genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
+    # Strictly using gemini-3-flash-preview per user request
     model = genai.GenerativeModel('gemini-3-flash-preview')
     supabase: Client = create_client(st.secrets["SUPABASE_URL"], st.secrets["SUPABASE_KEY"])
 
@@ -1036,7 +1036,7 @@ st.title(f"📂 Notebook: {st.session_state['active_notebook']}")
 st.divider()
 
 # ──────────────────────────────────────────────────────────────
-# 5. SECURE CLOUD FETCHING (only re-fetches when notebook changes)
+# 5. SECURE CLOUD FETCHING
 # ──────────────────────────────────────────────────────────────
 user_id = st.session_state['user'].id
 nb_name = st.session_state['active_notebook']
@@ -1060,7 +1060,6 @@ if _nb_changed or 'raw_cloud' not in st.session_state:
                 r['file_name']: pd.DataFrame(r['data']) for r in clean_res.data
             }
             
-            # Fetch saved dashboards and inflate from JSON back to Plotly objects
             dash_res = supabase.table("saved_dashboards").select("dashboard_data") \
                 .eq("user_id", user_id).eq("notebook_name", nb_name).execute()
             if dash_res.data:
@@ -1088,10 +1087,7 @@ tab1, tab2, tab3 = st.tabs([
 # ══════════════════════════════════════════════════════════════
 with tab1:
     st.subheader("📤 Upload New Data")
-    st.caption(
-        "Supported: CSV, Excel (.xlsx/.xls), JSON, SQLite (.db/.sqlite), "
-        "PDF, Word (.docx), plain text (.txt). Multiple files at once supported."
-    )
+    st.caption("Supported: CSV, Excel (.xlsx/.xls), JSON, SQLite (.db/.sqlite), PDF, Word (.docx), plain text (.txt).")
 
     uploaded_files = st.file_uploader(
         f"Drop files into '{nb_name}'",
@@ -1105,15 +1101,10 @@ with tab1:
         else:
             for file in uploaded_files:
 
-                # ── GUARD 1: Already in this notebook ─────────────────
                 if file.name in st.session_state.get('raw_cloud', {}):
-                    st.warning(
-                        f"⚠️ **'{file.name}'** already exists in this notebook. "
-                        f"Skipped. To replace it, delete it in the file manager below."
-                    )
+                    st.warning(f"⚠️ **'{file.name}'** already exists in this notebook. Skipped.")
                     continue
 
-                # ── GUARD 2: Exists in another notebook — reuse ───────
                 try:
                     existing_res = supabase.table("raw_datasets") \
                         .select("file_name, data, notebook_name") \
@@ -1130,23 +1121,18 @@ with tab1:
                         st.info(f"♻️ **'{file.name}'** found in notebook **'{source_nb}'** — linked here.")
                         continue
                 except Exception:
-                    pass  # fall through to normal upload
+                    pass 
 
-                # ── NORMAL PARSE + UPLOAD ──────────────────────────────
                 file_ext = pathlib.Path(file.name).suffix.lower()
                 try:
                     if file_ext in ['.csv', '.xlsx', '.xls', '.json']:
-                        if file_ext == '.csv':
-                            df = pd.read_csv(file)
-                        elif file_ext in ['.xlsx', '.xls']:
-                            df = pd.read_excel(file)
+                        if file_ext == '.csv': df = pd.read_csv(file)
+                        elif file_ext in ['.xlsx', '.xls']: df = pd.read_excel(file)
                         elif file_ext == '.json':
-                            try:
-                                df = pd.read_json(file, orient='records')
+                            try: df = pd.read_json(file, orient='records')
                             except Exception:
                                 file.seek(0)
-                                try:
-                                    df = pd.read_json(file, lines=True)
+                                try: df = pd.read_json(file, lines=True)
                                 except Exception:
                                     file.seek(0)
                                     content = file.getvalue().decode("utf-8")
@@ -1167,8 +1153,7 @@ with tab1:
                         st.success(f"✅ Uploaded: {file.name}")
 
                     elif file_ext in ['.txt', '.pdf', '.docx', '.db', '.sqlite']:
-                        if file_ext == '.txt':
-                            text_data = file.getvalue().decode("utf-8")
+                        if file_ext == '.txt': text_data = file.getvalue().decode("utf-8")
                         elif file_ext == '.pdf':
                             pdf_reader = PyPDF2.PdfReader(file)
                             text_data  = "".join([p.extract_text() + "\n" for p in pdf_reader.pages])
@@ -1194,25 +1179,17 @@ with tab1:
                 except Exception as e:
                     st.error(f"Error uploading {file.name}: {e}")
 
-    # ── Success nudge ──────────────────────────────────────────
     if st.session_state.get('raw_cloud'):
-        st.success(
-            f"✅ {len(st.session_state['raw_cloud'])} file(s) ready — "
-            f"head to **Part 2** to sanitise or **Part 3** for your dashboard."
-        )
-
-    # ── File Previews ──────────────────────────────────────────
-    if st.session_state.get('raw_cloud'):
+        st.success(f"✅ {len(st.session_state['raw_cloud'])} file(s) ready — head to **Part 2** to sanitise or **Part 3** for your dashboard.")
         st.divider()
         st.subheader("🗃️ Uploaded Files Preview")
         for fname, fdf in st.session_state['raw_cloud'].items():
             with st.expander(f"📄 {fname}  —  {len(fdf):,} rows × {len(fdf.columns)} cols"):
                 st.dataframe(fdf.head(5), use_container_width=True)
 
-    # ══ FILE MANAGER — Checkbox-based multi-delete ════════════
+    # ══ FILE MANAGER
     st.divider()
     st.subheader("🗂️ Manage Files")
-
     all_stored_files = (
         [("raw_datasets",     k, "🟡 RAW")   for k in st.session_state.get('raw_cloud',   {}).keys()] +
         [("cleaned_datasets", k, "🟢 CLEAN") for k in st.session_state.get('clean_cloud', {}).keys()]
@@ -1221,17 +1198,12 @@ with tab1:
     if not all_stored_files:
         st.caption("No files in this notebook yet.")
     else:
-        # Select All toggle
         select_all = st.checkbox("☑️ Select All", key="del_select_all")
-
         checked_files = []
         for table_name, fname, badge in all_stored_files:
             col_chk, col_label = st.columns([1, 11])
             with col_chk:
-                checked = st.checkbox(
-                    "", key=f"del_chk_{table_name}_{fname}",
-                    value=select_all, label_visibility="collapsed"
-                )
+                checked = st.checkbox("", key=f"del_chk_{table_name}_{fname}", value=select_all, label_visibility="collapsed")
             with col_label:
                 st.markdown(f"{badge} &nbsp; `{fname}`", unsafe_allow_html=True)
             if checked:
@@ -1240,10 +1212,7 @@ with tab1:
         st.write("")
         if checked_files:
             st.caption(f"**{len(checked_files)}** file(s) selected for deletion")
-            if st.button(
-                f"🗑️ Delete {len(checked_files)} Selected File(s)",
-                type="secondary", use_container_width=True
-            ):
+            if st.button(f"🗑️ Delete {len(checked_files)} Selected File(s)", type="secondary", use_container_width=True):
                 errors = []
                 for table_name, original_name in checked_files:
                     try:
@@ -1252,13 +1221,10 @@ with tab1:
                             .eq("notebook_name", nb_name) \
                             .eq("file_name",     original_name) \
                             .execute()
-                        if table_name == "raw_datasets":
-                            st.session_state['raw_cloud'].pop(original_name, None)
-                        else:
-                            st.session_state['clean_cloud'].pop(original_name, None)
+                        if table_name == "raw_datasets": st.session_state['raw_cloud'].pop(original_name, None)
+                        else: st.session_state['clean_cloud'].pop(original_name, None)
                     except Exception as e:
                         errors.append(f"{original_name}: {e}")
-
                 if errors:
                     for err in errors: st.error(f"🚨 {err}")
                 else:
@@ -1274,7 +1240,6 @@ with tab2:
     if not st.session_state.get('raw_cloud'):
         st.info("⬆️ No data yet — upload your files in **Part 1** first.")
 
-    # ── Sanitizer — sequential multi-file loop ─────────────────
     st.header("🧠 Universal Data Sanitizer")
 
     raw_keys = list(st.session_state.get('raw_cloud', {}).keys())
@@ -1295,26 +1260,19 @@ with tab2:
 
                 for i, file in enumerate(selected_files):
                     est_time = (total_files - i) * 15
-                    status_text.info(
-                        f"Processing **{i+1} of {total_files}**: `{file}` "
-                        f"— Est. remaining: ~{est_time}s"
-                    )
+                    status_text.info(f"Processing **{i+1} of {total_files}**: `{file}` — Est. remaining: ~{est_time}s")
 
                     df_to_process = st.session_state['raw_cloud'][file]
                     original_rows = len(df_to_process)
                     original_cols = len(df_to_process.columns)
 
-                    # ── 1. THE SMART PRE-CHECK ───────────────────────
                     def check_needs_cleaning(df):
                         issues = []
                         if df.isnull().all(axis=1).any(): issues.append("Contains rows that are 100% empty")
                         if df.isnull().all(axis=0).any(): issues.append("Contains columns that are 100% empty")
                         if df.duplicated().any(): issues.append("Contains exact duplicate rows")
-                        
                         bad_headers = [c for c in df.columns if not re.match(r'^[a-z0-9_]+$', str(c))]
                         if bad_headers: issues.append(f"Headers are not in strict snake_case (e.g., {bad_headers[:3]})")
-                        
-                        # Quick sample check for whitespace or junk nulls
                         for c in df.select_dtypes(include=['object']).columns:
                             sample = df[c].dropna().astype(str).head(100)
                             if sample.str.contains(r'^\s|\s$', regex=True).any():
@@ -1338,11 +1296,9 @@ with tab2:
                         progress_bar.progress((i + 1) / total_files)
                         continue
 
-                    # Format the targeted issues for the prompt and UI
                     targeted_issues_str = "\n".join([f"🔴 {issue}" for issue in issues_found])
-                    st.caption(f"🔧 **Diagnosed `{file}`. AI will specifically target:**\n{targeted_issues_str}")
+                    st.caption(f"🔧 **Diagnosed `{file}`. AI will target:**\n{targeted_issues_str}")
 
-                    # ── 2. RICH COLUMN PROFILE ────────────────────────
                     profile_lines = []
                     for col in df_to_process.columns:
                         dtype       = str(df_to_process[col].dtype)
@@ -1352,7 +1308,6 @@ with tab2:
                     col_profile = "\n".join(profile_lines)
                     full_sample = df_to_process.head(10).to_csv(index=False)
 
-                    # ── 3. THE DYNAMIC, TARGETED PROMPT ───────────────
                     clean_prompt = f"""
 You are an elite Data Engineer. Write a Python function `clean_data(df)` to sanitize this dataset.
 
@@ -1363,60 +1318,49 @@ SAMPLE DATA:
 {full_sample}
 
 🎯 TARGETED DIAGNOSTICS (PRIORITY FIXES):
-The pre-scan detected the following specific issues. You MUST explicitly write code to resolve these:
 {targeted_issues_str}
 
-GENERAL HYGIENE (Apply where relevant to ensure absolute cleanliness):
-1. Convert all headers to strict snake_case.
-2. Strip leading/trailing whitespace from all object/string columns.
-3. Replace junk nulls (e.g., '', 'n/a', 'na', 'none', '?') with np.nan.
-4. If a column is a date/time, standardize it to ISO 8601 (YYYY-MM-DD). Leave failed parses as NaN.
-5. If a column should be numeric but has symbols ($,%, commas), strip them and cast to float.
-6. Cap extreme outliers in numeric columns using the 1.5*IQR rule (Winsorize, do NOT drop rows).
-7. if df.empty: raise ValueError("Cleaning resulted in empty DataFrame")
+GENERAL HYGIENE:
+1. Headers to strict snake_case.
+2. Strip leading/trailing whitespace from string columns.
+3. Replace junk nulls ('', 'n/a', 'na', '?') with np.nan.
+4. Date columns to ISO 8601 (YYYY-MM-DD). Leave failed parses as NaN.
+5. If column should be numeric but has symbols ($,%, commas), strip and cast to float.
+6. Cap extreme outliers (Winsorize 1.5*IQR). Do NOT drop rows.
+7. if df.empty: raise ValueError("Empty DataFrame")
 
 STRICT CODE RULES:
-- CRITICAL: Before applying ANY `.str` methods, you MUST safely convert the column: `if df[col].dtype == object: df[col] = df[col].astype(str).str...` Do not use .str on float columns!
+- CRITICAL: Before applying ANY `.str` methods, safely convert the column: `if df[col].dtype == object: df[col] = df[col].astype(str).str...` Do not use .str on float columns!
 - Use df[col].str methods — NEVER df.applymap() or df.map() on whole DataFrame.
 - Do NOT aggregate, pivot, merge, or reshape.
 - Imports inside function body: import pandas as pd, import numpy as np, import re.
-- Return ONLY valid executable Python. NO markdown. NO backticks. NO explanations.
+- Return ONLY valid executable Python. NO markdown. NO backticks.
 """
-
                     try:
                         clean_response = model.generate_content(clean_prompt)
-                        clean_code = (
-                            clean_response.text.strip()
-                            .replace("```python", "").replace("```", "").strip()
-                        )
+                        clean_code = clean_response.text.strip().replace("```python", "").replace("```", "").strip()
                         local_vars = {}
                         exec(clean_code, globals(), local_vars)
                         df_cleaned = local_vars['clean_data'](df_to_process)
 
-                        # ── Before / After ────────────────────
                         st.subheader(f"Results for: `{file}`")
                         b_col, a_col = st.columns(2)
                         with b_col:
                             st.markdown("**🔴 Before (Raw)**")
                             st.dataframe(df_to_process.head(5), use_container_width=True)
-                            st.caption(f"{original_rows:,} rows · {original_cols} cols")
                         with a_col:
                             st.markdown("**🟢 After (Sanitised)**")
                             st.dataframe(df_cleaned.head(5), use_container_width=True)
-                            st.caption(f"{len(df_cleaned):,} rows · {len(df_cleaned.columns)} cols")
 
-                        # ── Auto-save ─────────────────────────
                         clean_name      = f"sanitized_{file}"
                         df_cleaned_json = df_cleaned.replace({np.nan: None})
                         supabase.table('cleaned_datasets').insert({
-                            'file_name': clean_name,
-                            'data':      df_cleaned_json.to_dict(orient='records'),
-                            'user_id':   user_id, 'notebook_name': nb_name
+                            'file_name': clean_name, 'data': df_cleaned_json.to_dict(orient='records'),
+                            'user_id': user_id, 'notebook_name': nb_name
                         }).execute()
                         st.session_state['clean_cloud'][clean_name] = df_cleaned
                         st.success(f"✅ Auto-saved as **'{clean_name}'**.")
 
-                        # ── Format-aware download ─────────────
                         ext_dl = pathlib.Path(file).suffix.lower()
                         try:
                             if ext_dl == '.csv':
@@ -1424,77 +1368,51 @@ STRICT CODE RULES:
                                 mime = "text/csv"; dl_name = clean_name
                             elif ext_dl in ['.xlsx', '.xls']:
                                 buf = io.BytesIO()
-                                with pd.ExcelWriter(buf, engine='openpyxl') as w:
-                                    df_cleaned.to_excel(w, index=False)
+                                with pd.ExcelWriter(buf, engine='openpyxl') as w: df_cleaned.to_excel(w, index=False)
                                 fb = buf.getvalue()
-                                mime = ("application/vnd.openxmlformats-officedocument"
-                                        ".spreadsheetml.sheet")
+                                mime = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                                 dl_name = f"sanitized_{pathlib.Path(file).stem}.xlsx"
                             elif ext_dl == '.json':
                                 fb = df_cleaned.to_json(orient='records', indent=2).encode('utf-8')
                                 mime = "application/json"; dl_name = clean_name
                             else:
                                 fb = df_cleaned.to_csv(index=False).encode('utf-8')
-                                mime = "text/csv"
-                                dl_name = f"sanitized_{pathlib.Path(file).stem}.csv"
+                                mime = "text/csv"; dl_name = f"sanitized_{pathlib.Path(file).stem}.csv"
                         except ImportError:
                             fb = df_cleaned.to_csv(index=False).encode('utf-8')
-                            mime = "text/csv"
-                            dl_name = f"sanitized_{pathlib.Path(file).stem}.csv"
+                            mime = "text/csv"; dl_name = f"sanitized_{pathlib.Path(file).stem}.csv"
 
-                        st.download_button(
-                            label=f"⬇️ Download {dl_name}",
-                            data=fb, file_name=dl_name, mime=mime,
-                            use_container_width=True
-                        )
+                        st.download_button(label=f"⬇️ Download {dl_name}", data=fb, file_name=dl_name, mime=mime, use_container_width=True)
                         st.divider()
 
                     except Exception as e:
                         st.error(f"🚨 Sanitization failed for '{file}': {e}")
-
                     progress_bar.progress((i + 1) / total_files)
 
                 status_text.success(f"🎉 All {total_files} file(s) sanitised and saved!")
 
-    # ── Chat Section ───────────────────────────────────────────
     st.divider()
     st.header("💬 Chat with your Data")
 
-    all_chat_data = {
-        **st.session_state.get('raw_cloud',   {}),
-        **st.session_state.get('clean_cloud', {})
-    }
+    all_chat_data = {**st.session_state.get('raw_cloud', {}), **st.session_state.get('clean_cloud', {})}
 
     if not all_chat_data:
         st.info("Upload or sanitise data above to begin chatting.")
     else:
-        chat_file = st.selectbox(
-            "Which dataset do you want to talk to?",
-            list(all_chat_data.keys()),
-            key="chat_file_selector"
-        )
+        chat_file = st.selectbox("Which dataset do you want to talk to?", list(all_chat_data.keys()), key="chat_file_selector")
         df_chat = all_chat_data[chat_file]
 
-        llm = ChatGoogleGenerativeAI(
-            model="gemini-3-flash-preview", temperature=0,
-            google_api_key=st.secrets["GEMINI_API_KEY"]
-        )
-        agent = create_pandas_dataframe_agent(
-            llm, df_chat, verbose=True,
-            allow_dangerous_code=True, handle_parsing_errors=True
-        )
+        llm = ChatGoogleGenerativeAI(model="gemini-3-flash-preview", temperature=0, google_api_key=st.secrets["GEMINI_API_KEY"])
+        agent = create_pandas_dataframe_agent(llm, df_chat, verbose=True, allow_dangerous_code=True, handle_parsing_errors=True)
 
-        if "messages" not in st.session_state:
-            st.session_state.messages = []
+        if "messages" not in st.session_state: st.session_state.messages = []
 
         for message in st.session_state.messages:
-            with st.chat_message(message["role"]):
-                st.markdown(message["content"])
+            with st.chat_message(message["role"]): st.markdown(message["content"])
 
         if prompt := st.chat_input(f"Ask something about {chat_file}..."):
             st.session_state.messages.append({"role": "user", "content": prompt})
-            with st.chat_message("user"):
-                st.markdown(prompt)
+            with st.chat_message("user"): st.markdown(prompt)
             with st.chat_message("assistant"):
                 with st.spinner("Crunching the numbers..."):
                     try:
@@ -1505,19 +1423,14 @@ STRICT CODE RULES:
                     except Exception as e:
                         error_str = str(e)
                         if "Could not parse LLM output:" in error_str:
-                            extracted = (
-                                error_str
-                                .split("Could not parse LLM output:")[1]
-                                .split("For troubleshooting, visit:")[0]
-                                .strip(" `\n")
-                            )
+                            extracted = error_str.split("Could not parse LLM output:")[1].split("For troubleshooting, visit:")[0].strip(" `\n")
                             st.markdown(extracted)
                             st.session_state.messages.append({"role": "assistant", "content": extracted})
                         else:
                             st.error(f"Could not calculate that. Error: {e}")
 
 # ══════════════════════════════════════════════════════════════
-# TAB 3 — DASHBOARD
+# TAB 3 — POWER BI GRADE DASHBOARD
 # ══════════════════════════════════════════════════════════════
 with tab3:
     all_dash_data = {
@@ -1528,19 +1441,18 @@ with tab3:
     if not all_dash_data:
         st.info("⬆️ No data yet — upload your files in **Part 1** first.")
     else:
-        st.header("📊 Executive Analytics")
+        st.header("📊 Executive Power-BI Grade Dashboard")
 
         # ── Check if dashboard already exists in memory ──
         if nb_name in st.session_state.get('dashboards', {}):
-            st.success("✅ Persistent Dashboard Loaded from Vault.")
+            st.success("✅ Persistent Executive Dashboard Loaded from Vault.")
             current_dash = st.session_state['dashboards'][nb_name]
             
-            # --- EXPORT TO HTML ---
             with st.expander("📥 Export Dashboard Report", expanded=False):
                 st.caption("Download this dashboard as a standalone, interactive HTML file to share with stakeholders.")
-                html_content = f"<html><head><title>Executive Report: {nb_name}</title><style>body {{ font-family: 'Segoe UI', Tahoma, sans-serif; background-color: #f4f6f9; padding: 40px; color: #1a1a2e; }} .container {{ max-width: 1200px; margin: auto; }} h1 {{ border-bottom: 2px solid #e2e8f0; padding-bottom: 10px; color: #2c3e50; }} .chart-box {{ background: white; margin-bottom: 30px; padding: 25px; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); }}</style></head><body><div class='container'><h1>Executive Report: {nb_name}</h1>"
+                html_content = f"<html><head><title>Executive Report: {nb_name}</title><style>body {{ font-family: 'Segoe UI', Tahoma, sans-serif; background-color: #F3F4F6; padding: 40px; color: #1F2937; }} .container {{ max-width: 1200px; margin: auto; }} h1 {{ border-bottom: 2px solid #E5E7EB; padding-bottom: 10px; color: #111827; }} .chart-box {{ background: white; margin-bottom: 30px; padding: 25px; border-radius: 8px; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06); }}</style></head><body><div class='container'><h1>Executive Report: {nb_name}</h1>"
                 for title, fig in current_dash.items():
-                    html_content += f"<div class='chart-box'><h2>{title}</h2>{fig.to_html(full_html=False, include_plotlyjs='cdn')}</div>"
+                    html_content += f"<div class='chart-box'>{fig.to_html(full_html=False, include_plotlyjs='cdn')}</div>"
                 html_content += "</div></body></html>"
 
                 st.download_button(label="📄 Download Interactive HTML Report", data=html_content, file_name=f"Executive_Report_{nb_name}.html", mime="text/html", use_container_width=True)
@@ -1557,7 +1469,6 @@ with tab3:
                         t = chart_titles[row_start + 1]
                         st.plotly_chart(current_dash[t], use_container_width=True, key=f"dash_chart_{nb_name}_{row_start+1}")
             
-            # Allow user to overwrite
             st.divider()
             if st.button("🔄 Regenerate New Dashboard Configuration", type="secondary"):
                 supabase.table("saved_dashboards").delete().eq("user_id", user_id).eq("notebook_name", nb_name).execute()
@@ -1566,7 +1477,7 @@ with tab3:
 
         # ── Dashboard Builder UI (If none exists) ──
         else:
-            st.caption("Select datasets to analyze. The AI will detect patterns and generate a story-driven, presentation-ready dashboard.")
+            st.caption("Select datasets. The AI will generate a professional, presentation-ready dashboard emphasizing storytelling, data-ink ratio, and high-impact visuals.")
             clean_keys   = list(st.session_state.get('clean_cloud', {}).keys())
             default_keys = clean_keys[:2] if clean_keys else list(all_dash_data.keys())[:1]
 
@@ -1580,26 +1491,29 @@ with tab3:
                     schema_intel += f"\n=== {name} ===\nCols: {list(df.columns)}\n"
 
                 if st.button("🪄 Generate Executive Dashboard", type="primary"):
-                    with st.spinner("AI is analyzing schemas and designing visuals..."):
+                    with st.spinner("Architecting Power-BI grade visual storytelling..."):
                         dash_prompt = f"""
-You are a Senior BI Architect designing a dashboard for a Fortune 500 executive.
-Write a Python function `build_dashboard(data_dict)` returning EXACTLY 6 Plotly figures.
+You are an elite Power BI Architect and Data Storyteller. Your task is to write a Python function `build_dashboard(data_dict)` that generates EXACTLY 6 Plotly figures acting as a cohesive, professional executive dashboard.
 
 DATASETS:
 {schema_intel}
 
-EXECUTIVE DESIGN RULES (STRICT):
-1. TITLES TELL A STORY: Never use "Sales vs Time". Use "Sales Peaked in Q4 Due to X". Infer likely trends from column names.
-2. MINIMALIST AESTHETIC: You MUST apply `template="plotly_white"` to every chart.
-3. REMOVE JUNK: Hide gridlines `fig.update_yaxes(showgrid=False)`. Hide top/right spines.
-4. SOPHISTICATED COLORS: Use professional palettes like `px.colors.qualitative.Prism`.
-5. ANNOTATIONS: Add `text_auto='.2s'` to bar charts. 
-6. MIX: 1 Trend (Line), 1 Distribution (Hist/Box), 1 Comparison (Bar), 1 Relationship (Scatter), 2 others.
+POWER BI & STORYTELLING DESIGN CONSTRAINTS (STRICT):
+1. INSIGHT-DRIVEN TITLES: Titles MUST be the main takeaway (e.g., "Revenue Grew 15% in Q3" NOT "Revenue over Time"). Use HTML formatting for a Title and Subtitle: `"<b>Main Insight</b><br><i><span style='font-size:12px'>Metric definition</span></i>"`.
+2. CORPORATE AESTHETIC: Use `template="plotly_white"`. Backgrounds must be perfectly white. Hide all gridlines (`fig.update_yaxes(showgrid=False)`). Hide top/right spines.
+3. COLOR THEORY: Use a cohesive, muted palette. Use light grays for background data points, and a bold accent color (like #0052CC or #10B981) ONLY for the top category/trendline to guide the eye.
+4. DATA LABELS: Use `text_auto='.2s'` for bar charts. Avoid messy legends if direct labeling is possible.
+5. CHART VARIETY: 
+   - AT LEAST ONE `go.Indicator` (KPI Card) showing the absolute most important top-level metric.
+   - 1 Time-series trend (Line)
+   - 1 Ranked Comparison (Horizontal Bar)
+   - 1 Composition (Donut/Treemap) or Correlation (Scatter/Heatmap)
+   - 2 others that fit the data story.
 
 FUNCTION CONTRACT:
-- Extract: `df = data_dict["key"]`. Dynamically infer dtypes `df.select_dtypes(...)`.
-- Handle NaNs: `df_plot = df.dropna(...)`.
-- Wrap EVERY chart in `try/except`. If one fails, generate a fallback text-based figure using `go.Figure()`.
+- Extract: `df = data_dict["key"]`. Dynamically infer dtypes using `df.select_dtypes(...)`.
+- Handle NaNs: `df_plot = df.dropna(...)` before plotting.
+- Wrap EVERY chart in `try/except`. If one fails, generate a fallback text-based `go.Figure()` with a safe title and text annotation explaining the error.
 - Return exactly: `{{ "Story Title 1": fig1, "Story Title 2": fig2, "Story Title 3": fig3, "Story Title 4": fig4, "Story Title 5": fig5, "Story Title 6": fig6 }}`
 - Return ONLY valid Python code. NO backticks. NO markdown.
 """
@@ -1617,17 +1531,14 @@ FUNCTION CONTRACT:
                             dashboard_figs = local_vars['build_dashboard'](df_dict)
 
                             # --- SAVING LOGIC ---
-                            # 1. Convert complex Plotly objects to JSON strings
                             dash_json = {title: fig.to_json() for title, fig in dashboard_figs.items()}
                             
-                            # 2. Save to Supabase (Upsert to replace if exists)
                             supabase.table('saved_dashboards').upsert({
                                 'user_id': user_id,
                                 'notebook_name': nb_name,
                                 'dashboard_data': dash_json
                             }, on_conflict='user_id, notebook_name').execute()
 
-                            # 3. Save to local memory and reload
                             st.session_state.setdefault('dashboards', {})[nb_name] = dashboard_figs
                             st.rerun()
 
