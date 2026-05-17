@@ -800,7 +800,6 @@ FUNCTION CONTRACT:
                         except Exception as e:
                             st.error(f"🚨 Dashboard generation failed. Details: {e}")
 '''
-
 import streamlit as st
 import pandas as pd
 import pathlib
@@ -865,12 +864,23 @@ if st.session_state['user'] is None:
             log_pass  = st.text_input("Password", type="password", key="log_pass")
             if st.button("Login", use_container_width=True, type="primary"):
                 try:
-                    response = supabase.auth.sign_in_with_password({"email": log_email, "password": log_pass})
-                    st.session_state['user']    = response.user
-                    st.session_state['session'] = response.session
-                    st.rerun()
-                except Exception:
-                    st.error("Login failed. Please check your credentials.")
+                    if not log_email or not log_pass:
+                        st.warning("Please enter both email and password.")
+                    else:
+                        response = supabase.auth.sign_in_with_password({"email": log_email, "password": log_pass})
+                        st.session_state['user']    = response.user
+                        st.session_state['session'] = response.session
+                        st.rerun()
+                except Exception as _login_err:
+                    err_str = str(_login_err)
+                    if "Email not confirmed" in err_str:
+                        st.error("⚠️ Your email address has not been confirmed yet. Please check your inbox and click the confirmation link.")
+                    elif "Invalid login credentials" in err_str or "invalid_credentials" in err_str:
+                        st.error("❌ Incorrect email or password. Please try again.")
+                    elif "Email rate limit exceeded" in err_str:
+                        st.error("⏳ Too many login attempts. Please wait a few minutes and try again.")
+                    else:
+                        st.error(f"Login error: {_login_err}")
 
         with auth_tab2:
             reg_name  = st.text_input("First Name", key="reg_name")
@@ -878,13 +888,18 @@ if st.session_state['user'] is None:
             reg_pass  = st.text_input("New Password", type="password", key="reg_pass")
             if st.button("Register", use_container_width=True):
                 try:
-                    supabase.auth.sign_up({
-                        "email": reg_email, "password": reg_pass,
-                        "options": {"data": {"first_name": reg_name}}
-                    })
-                    st.success("Registration successful! You can now log in.")
-                except Exception as e:
-                    st.error(f"Registration failed: {e}")
+                    if not reg_email or not reg_pass:
+                        st.warning("Please fill in all fields.")
+                    elif len(reg_pass) < 6:
+                        st.warning("Password must be at least 6 characters.")
+                    else:
+                        supabase.auth.sign_up({
+                            "email": reg_email, "password": reg_pass,
+                            "options": {"data": {"first_name": reg_name}}
+                        })
+                        st.success("✅ Registration successful! Check your email to confirm your account, then log in.")
+                except Exception as _reg_err:
+                    st.error(f"Registration error: {_reg_err}")
     st.stop()
 
 # ──────────────────────────────────────────────────────────────
@@ -1565,7 +1580,7 @@ STRICT CODE RULES — THESE WILL CAUSE RUNTIME ERRORS IF VIOLATED:
         df_chat = all_chat_data[chat_file]
 
         llm = ChatGoogleGenerativeAI(
-            model="gemini-2.5-flash-preview-05-20", temperature=0,
+            model="gemini-3-flash-preview", temperature=0,
             google_api_key=st.secrets["GEMINI_API_KEY"]
         )
         agent = create_pandas_dataframe_agent(
