@@ -922,7 +922,7 @@ st.sidebar.markdown("### 👤 My Profile")
 st.sidebar.markdown(f"**Name:** {user_name}")
 st.sidebar.markdown(f"**Email:** {st.session_state['user'].email}")
 
-if st.sidebar.button("🚪 Log Out", use_container_width=True):
+if st.sidebar.button(" Log Out", use_container_width=True):
     for _k in ['user', 'session', 'notebook_list', 'active_notebook',
                'raw_cloud', 'clean_cloud', 'dashboards', 'messages', '_session_restored', '_loaded_nb']:
         st.session_state.pop(_k, None)
@@ -937,10 +937,10 @@ if 'show_nb_modal'  not in st.session_state: st.session_state['show_nb_modal']  
 if 'confirm_del_nb' not in st.session_state: st.session_state['confirm_del_nb'] = False
 if 'dashboards' not in st.session_state: st.session_state['dashboards'] = {}
 
-st.sidebar.markdown("### 📚 My Notebooks")
+st.sidebar.markdown("###  My Notebooks")
 
 # ── New Notebook Button ────────────────────────────────────────
-if st.sidebar.button("📓 New Notebook", use_container_width=True):
+if st.sidebar.button(" New Notebook", use_container_width=True):
     st.session_state['show_nb_modal']  = True
     st.session_state['confirm_del_nb'] = False
 
@@ -950,7 +950,7 @@ def new_notebook_modal():
     nb_input = st.text_input("Notebook name", placeholder="e.g., Q3 Financials")
     col_ok, col_cancel = st.columns(2)
     with col_ok:
-        if st.button("✅ Create", use_container_width=True, type="primary"):
+        if st.button(" Create", use_container_width=True, type="primary"):
             if nb_input and nb_input not in st.session_state['notebook_list']:
                 st.session_state['notebook_list'].append(nb_input)
                 st.session_state['active_notebook'] = nb_input
@@ -989,7 +989,7 @@ if st.session_state['notebook_list']:
                 st.rerun()
 
 # ── Delete Notebook Confirmation Dialog ───────────────────────
-@st.dialog("⚠️ Confirm Notebook Deletion")
+@st.dialog(" Confirm Notebook Deletion")
 def confirm_delete_notebook():
     nb_del = st.session_state.get('nb_to_delete', '')
     st.warning(
@@ -1029,7 +1029,7 @@ if st.session_state.get('confirm_del_nb'):
 # 4. THE NOTEBOOK ENFORCER
 # ──────────────────────────────────────────────────────────────
 if st.session_state['active_notebook'] is None:
-    st.warning("👋 Welcome! Please create your first Notebook in the sidebar to begin working.")
+    st.warning(" Welcome! Please create your first Notebook in the sidebar to begin working.")
     st.stop()
 
 st.title(f"📂 Notebook: {st.session_state['active_notebook']}")
@@ -1086,7 +1086,7 @@ tab1, tab2, tab3 = st.tabs([
 # TAB 1 — UPLOAD
 # ══════════════════════════════════════════════════════════════
 with tab1:
-    st.subheader("📤 Upload New Data")
+    st.subheader(" Upload New Data")
     st.caption("Supported: CSV, Excel (.xlsx/.xls), JSON, SQLite (.db/.sqlite), PDF, Word (.docx), plain text (.txt).")
 
     uploaded_files = st.file_uploader(
@@ -1102,7 +1102,7 @@ with tab1:
             for file in uploaded_files:
 
                 if file.name in st.session_state.get('raw_cloud', {}):
-                    st.warning(f"⚠️ **'{file.name}'** already exists in this notebook. Skipped.")
+                    st.warning(f" **'{file.name}'** already exists in this notebook. Skipped.")
                     continue
 
                 try:
@@ -1150,7 +1150,7 @@ with tab1:
                                 'user_id': user_id, 'notebook_name': nb_name
                             }).execute()
                         st.session_state['raw_cloud'][file.name] = df
-                        st.success(f"✅ Uploaded: {file.name}")
+                        st.success(f" Uploaded: {file.name}")
 
                     elif file_ext in ['.txt', '.pdf', '.docx', '.db', '.sqlite']:
                         if file_ext == '.txt': text_data = file.getvalue().decode("utf-8")
@@ -1174,13 +1174,13 @@ with tab1:
                                 'user_id': user_id, 'notebook_name': nb_name
                             }).execute()
                         st.session_state['raw_cloud'][file.name] = df
-                        st.success(f"✅ Uploaded document: {file.name}")
+                        st.success(f" Uploaded document: {file.name}")
 
                 except Exception as e:
                     st.error(f"Error uploading {file.name}: {e}")
 
     if st.session_state.get('raw_cloud'):
-        st.success(f"✅ {len(st.session_state['raw_cloud'])} file(s) ready — head to **Part 2** to sanitise or **Part 3** for your dashboard.")
+        st.success(f" {len(st.session_state['raw_cloud'])} file(s) ready — head to **Part 2** to sanitise or **Part 3** for your dashboard.")
         st.divider()
         st.subheader("🗃️ Uploaded Files Preview")
         for fname, fdf in st.session_state['raw_cloud'].items():
@@ -1198,7 +1198,7 @@ with tab1:
     if not all_stored_files:
         st.caption("No files in this notebook yet.")
     else:
-        select_all = st.checkbox("☑️ Select All", key="del_select_all")
+        select_all = st.checkbox(" Select All", key="del_select_all")
         checked_files = []
         for table_name, fname, badge in all_stored_files:
             col_chk, col_label = st.columns([1, 11])
@@ -1228,7 +1228,7 @@ with tab1:
                 if errors:
                     for err in errors: st.error(f"🚨 {err}")
                 else:
-                    st.success(f"✅ {len(checked_files)} file(s) permanently deleted.")
+                    st.success(f" {len(checked_files)} file(s) permanently deleted.")
                 st.rerun()
 
 
